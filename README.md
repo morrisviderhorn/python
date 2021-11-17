@@ -25,37 +25,33 @@ The script should be compatible in line with PEP8 coding guidelines.
 
 My Script:
 
-### Task Script that when you run, it will search for a file or files you provide for specific word and print out the line number that contain the word ###
+Once you run the script (see attached files), you can query text file/s for specific words and the print will show you the line where the word located and the number 
+of the line in the text document
 
-### In order to view colored text please install termcolor by opening python terminal and run the command $ pip install termcolor ###
+Example:
 
-### Import all modules that require for the script to run ###
-import re
-import  string  
-from termcolor import colored
-import argparse
+mviderhorn@CHE100161 MINGW64 ~/Downloads/Ex_Files_Learning_Python_Upd/Ex_Files_Learning_Python_Upd/Exercise Files/Ch2
+$ python lionel.py -f "IIS-Hardening.txt","Server_Hardening.txt"
+IIS-Hardening.txt,Server_Hardening.txt
+Enter a word you want to search in the document/s ?memory
 
-### Parser - Script accept list optional parameters which are mutually exclusive ###
-parser = argparse.ArgumentParser(description='Description of your program')
-parser.add_argument('-f','--files', help='Indication for the file name', required=True)
+The print will yield with the following:
 
-### Arguments
-args = vars(parser.parse_args())
-
-### Print the arguments ###
-print(args['files'])
-
-### Command to get input of the word to search in the document ###
-search_word = input("Enter a word you want to search in the document/s ?")
-
-### The ability to enter and search multipe documents ###
-documents = args['files'].split(",")
-
-### create the for loop to search the specific word in all document lines and print out the result ###
-for document in documents:
-    opened_document = open(document, encoding="utf8")
-    line_number = 0
-    for line in opened_document:
-        line_number +=1
-        if re.search(r'\b\b' + search_word, line, line_number >=0):
-            print(line,"Match word", search_word, "in line number", line_number, "in the file", opened_document.name)
+Set-ItemProperty -Path "IIS:\AppPools\DefaultAppPool" -Name Recycling.periodicRestart.memory -Value 4194304
+ Match word memory in line number 124 in the file IIS-Hardening.txt
+Set-ItemProperty -Path "IIS:\AppPools\IdentityServerCore" -Name Recycling.periodicRestart.memory -Value 4194304
+ Match word memory in line number 130 in the file IIS-Hardening.txt
+Set-ItemProperty -Path "IIS:\AppPools\DefaultAppPool" -Name Recycling.periodicRestart.memory -Value 4194304
+ Match word memory in line number 132 in the file IIS-Hardening.txt
+Set-ItemProperty -Path "IIS:\AppPools\IdentityServerCore" -Name Recycling.periodicRestart.memory -Value 4194304
+ Match word memory in line number 138 in the file IIS-Hardening.txt
+Set-ItemProperty -Path "IIS:\AppPools\DefaultAppPool" -Name Recycling.periodicRestart.memory -Value 4194304
+ Match word memory in line number 140 in the file IIS-Hardening.txt
+Set-ItemProperty -Path "IIS:\AppPools\IdentityServerCore" -Name Recycling.periodicRestart.memory -Value 4294967295
+ Match word memory in line number 146 in the file IIS-Hardening.txt
+Set-ItemProperty -Path "IIS:\AppPools\DefaultAppPool" -Name Recycling.periodicRestart.memory -Value 4294967295
+ Match word memory in line number 148 in the file IIS-Hardening.txt
+    SeIncreaseQuotaPrivilege Adjust memory quotas for a process
+ Match word memory in line number 1172 in the file Server_Hardening.txt
+    SeLockMemoryPrivilege Lock pages in memory
+ Match word memory in line number 1197 in the file Server_Hardening.txt
