@@ -1,0 +1,2072 @@
+﻿### IIS Hardening Script ###
+
+$date = Get-Date -Format "dddd MM/dd/yyyy HH:mm K"
+
+#region Import IIS WebAdministration Module
+
+write-host "### Import IIS Modules ###" -ForegroundColor Green
+
+try {
+
+$osversion = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name "ProductName"
+$ServerOSversion = $osversion.ProductName
+
+if($ServerOSversion -cmatch "2012") { Import-module webadministration }
+
+if($ServerOSversion -cmatch "2016" -or $ServerOSversion -cmatch "2019" ) { 
+
+Import-module webadministration 
+Import-Module IISAdministration
+
+Write-output $date 'Import IIS Modules task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Import IIS Modules task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Import IIS WebAdministration Module
+
+#region CHC cardiology variables
+
+write-host "### CHC cardiology variables ###"-ForegroundColor Green
+
+try { 
+
+$CHC1411 = Get-ItemProperty -Path 'HKLM:\SOFTWARE\WOW6432Node\Medcon\TCS\' -Name "Revision"
+$CHC142 = Get-ItemProperty -Path 'HKLM:\SOFTWARE\WOW6432Node\Medcon\TCS\' -Name "Revision" 
+$CHC143 = Get-ItemProperty -Path 'HKLM:\SOFTWARE\WOW6432Node\Medcon\TCS\' -Name "Revision"
+$CHC15 = Get-ItemProperty -Path 'HKLM:\SOFTWARE\WOW6432Node\Medcon\TCS\' -Name "Revision"
+
+Write-output $date 'Loading CHC cardiology variables completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Loading CHC cardiology variables failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion CHC cardiology variables
+
+#region Remove unused directories
+
+write-host "### Remove unused directories ###" -ForegroundColor Green
+
+try {
+
+Remove-Item -Path "c:\inetpub\wwwroot\aspnet_client" -recurse -ErrorAction Ignore
+
+C:\Windows\System32\inetsrv\appcmd.exe delete VDIR "Default Web Site/CrystalReportWebFormViewer2"
+
+Write-output $date 'Remove unused directories completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Remove unused directories failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Remove unused directories
+
+#region Configuring Memory for each Application Pool
+
+write-host "### Configuring Memory for each Application Pool ###" -ForegroundColor Green
+
+try {
+
+$applicationPoolsPath = "/system.applicationHost/applicationPools"
+$applicationPools = Get-WebConfiguration $applicationPoolsPath
+
+
+foreach ($appPool in $applicationPools.Collection)
+{
+    $appPoolPath = "$applicationPoolsPath/add[@name='$($appPool.Name)']"
+    Get-WebConfiguration "$appPoolPath/recycling/periodicRestart/@Memory" 
+    Set-WebConfiguration "$appPoolPath/recycling/periodicRestart/@Memory" -Value 921600
+}
+
+
+foreach ($appPool in $applicationPools.Collection)
+{
+    $appPoolPath = "$applicationPoolsPath/add[@name='$($appPool.Name)']"
+    Get-WebConfiguration "$appPoolPath/recycling/periodicRestart/@privateMemory" 
+    Set-WebConfiguration "$appPoolPath/recycling/periodicRestart/@privateMemory" -Value 307200 
+}
+
+Write-output $date 'Configuring Memory for each Application Pool completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Configuring Memory for each Application Pool failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Configuring Memory for each Application Pool
+
+#region Set Application Pool Identity Server Core and Default App Pool Memory
+
+write-host "### Set Application Pool Identity Server Core and Default App Pool Memory ###" -ForegroundColor Green
+
+try {
+
+if($CHC1411.Revision -cmatch "CHC14.1.1") {
+
+Set-ItemProperty -Path "IIS:\AppPools\DefaultAppPool" -Name Recycling.periodicRestart.memory -Value 4194304
+
+}
+
+if($CHC142.Revision -cmatch "CHC14.2") {
+
+Set-ItemProperty -Path "IIS:\AppPools\IdentityServerCore" -Name Recycling.periodicRestart.memory -Value 4194304
+
+Set-ItemProperty -Path "IIS:\AppPools\DefaultAppPool" -Name Recycling.periodicRestart.memory -Value 4194304
+
+ }
+
+ if($CHC143.Revision -cmatch "CHC14.3") {
+
+Set-ItemProperty -Path "IIS:\AppPools\IdentityServerCore" -Name Recycling.periodicRestart.memory -Value 4194304
+
+Set-ItemProperty -Path "IIS:\AppPools\DefaultAppPool" -Name Recycling.periodicRestart.memory -Value 4194304
+
+ }
+
+ if($CHC15.Revision -cmatch "CHC15") {
+
+Set-ItemProperty -Path "IIS:\AppPools\IdentityServerCore" -Name Recycling.periodicRestart.memory -Value 4294967295
+
+Set-ItemProperty -Path "IIS:\AppPools\DefaultAppPool" -Name Recycling.periodicRestart.memory -Value 4294967295
+
+ }
+
+Write-output $date 'Set Application Pool Identity Server Core and Default App Pool Memory completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+
+ catch {
+ 
+Out-File -InputObject "$date $_  'Set Application Pool Identity Server Core and Default App Pool Memory failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+ 
+}
+
+ #endregion Set Application Pool Identity Server Core and Default App Pool Memory
+ 
+#region Application Pool Recycle bin
+
+write-host "### Application Pool Recycle bin ###" -ForegroundColor Green
+
+try {
+
+if($CHC1411.Revision -cmatch "CHC14.1.1") {
+
+$recycleLogEvents = "Time,Requests,Schedule,Memory,IsapiUnhealthy,OnDemand,ConfigChange,PrivateMemory"
+Set-ItemProperty "IIS:\AppPools\ArchiveManagement" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\AzureSbrHost" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\ClientsLauncher" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MCD" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MCReporting" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MCWebService" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MDWeb" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MedconWebServices" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MobileGateway" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\PTV" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\SystemAnalytics" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\Webclient" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents 
+
+}
+
+if($CHC142.Revision -cmatch "CHC14.2") {
+
+$recycleLogEvents = "Time,Requests,Schedule,Memory,IsapiUnhealthy,OnDemand,ConfigChange,PrivateMemory"
+Set-ItemProperty "IIS:\AppPools\ArchiveManagement" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\AzureSbrHost" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\ClientsLauncher" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\IdentityServerCore" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MCD" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MCReporting" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MCWebService" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MDWeb" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MedconWebServices" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MobileGateway" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\PTV" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\SystemAnalytics" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\Webclient" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents }
+
+if($CHC143.Revision -cmatch "CHC14.3") {
+
+$recycleLogEvents = "Time,Requests,Schedule,Memory,IsapiUnhealthy,OnDemand,ConfigChange,PrivateMemory"
+Set-ItemProperty "IIS:\AppPools\ArchiveManagement" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\AzureSbrHost" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\ClientsLauncher" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\IdentityServerCore" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MCD" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MCReporting" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MCWebService" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MDWeb" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MedconWebServices" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MobileGateway" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\PTV" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\SystemAnalytics" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\Webclient" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents }
+
+if($CHC15.Revision -cmatch "CHC15") {
+
+$recycleLogEvents = "Time,Requests,Schedule,Memory,IsapiUnhealthy,OnDemand,ConfigChange,PrivateMemory"
+Set-ItemProperty "IIS:\AppPools\ArchiveManagement" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\ClientsLauncher" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\IdentityServerCore" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MCD" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MCReporting" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MCWebService" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MDWeb" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\MedconWebServices" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\PTV" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\SystemAnalytics" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents
+Set-ItemProperty "IIS:\AppPools\Webclient" -Name Recycling.logEventOnRecycle -Value $recycleLogEvents }
+
+Write-output $date 'Application Pool Recycle bin task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Application Pool Recycle bin task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Application Pool Recycle bin
+
+#region Application Pools Configuration - For MedconWebServices Application Pool
+
+write-host "### Application Pools Configuration - For MedconWebServices Application Pool ###" -ForegroundColor Green
+
+try {
+
+$defaultAppPool = Get-ItemProperty IIS:\AppPools\MedconWebServices
+
+Set-ItemProperty -Path $defaultAppPool.PSPath -Name queueLength -Value 4000
+
+Set-ItemProperty -Path $defaultAppPool.PSPath -Name processModel.idleTimeout -value ( [TimeSpan]::FromMinutes(0))
+
+Set-ItemProperty -Path $defaultAppPool.PSPath -Name processModel.pingingEnabled -Value True
+
+Set-ItemProperty -Path $defaultAppPool.PSPath -Name failure.rapidFailProtection  -Value True
+
+Set-ItemProperty -Path $defaultAppPool.PSPath -Name failure.rapidFailProtectionInterval	-Value 00:05:00
+
+
+Write-output $date 'Application Pools Configuration - For MedconWebServices Application Pool completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_ 'Application Pools Configuration - For MedconWebServices Application Pool failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Application Pools Configuration - For MedconWebServices Application Pool
+
+#region Turn off Debug
+
+write-host "### Turn off Debug ###" -ForegroundColor Green
+
+try {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config /commit:WEBROOT /section:compilation /debug:false
+
+Write-output $date 'Turn off Debug completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Turn off Debug failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+} 
+
+#endregion Turn off Debug
+
+#region Backup interactive scripts must be removed from the web site
+
+write-host "### Backup interactive scripts must be removed from the web site, the step can take some time (3 minutes) ###" -ForegroundColor Green
+
+try {
+
+$source="c:\" 
+
+$files=@("*.bak", "*.old", "*.temp", "*.tmp", "*.backup")
+
+Get-ChildItem -recurse ($source) -include ($files) -File -ErrorAction SilentlyContinue | ForEach-Object {
+    $removeErrors = @()
+    $_ | Remove-Item -ErrorAction SilentlyContinue -ErrorVariable removeErrors
+    $removeErrors | where-object { $_.Exception.Message -notlike '*it is being used by another process*' }
+
+Write-output $date 'Backup interactive scripts must be removed from the web site completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Backup interactive scripts must be removed from the web site failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Backup interactive scripts must be removed from the web site
+
+#region IIS Logging
+
+write-host "### IIS Logging ###" -ForegroundColor Green
+
+try {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config -section:system.applicationHost/log /centralLogFileMode:"CentralW3C" /commit:apphost
+
+Set-WebConfigurationProperty -pspath 'IIS:\'  -filter "system.applicationHost/sites/siteDefaults/logFile" -name "logTargetW3C" -value "File,ETW"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config  -section:system.applicationHost/sites /+"siteDefaults.logFile.customFields.[logFieldName='Connection',sourceName='Connection',sourceType='RequestHeader']" /commit:apphost
+
+C:\Windows\System32\inetsrv\appcmd.exe set config  -section:system.applicationHost/sites /+"siteDefaults.logFile.customFields.[logFieldName='Warning',sourceName='Warning',sourceType='RequestHeader']" /commit:apphost
+
+C:\Windows\System32\inetsrv\appcmd.exe set config  -section:system.applicationHost/sites /+"siteDefaults.logFile.customFields.[logFieldName='HTTP_Connection',sourceName='HTTP_Connection',sourceType='ServerVariable']" /commit:apphost
+
+C:\Windows\System32\inetsrv\appcmd.exe set config  -section:system.applicationHost/sites /+"siteDefaults.logFile.customFields.[logFieldName='User-Agent',sourceName='User-Agent',sourceType='RequestHeader']" /commit:apphost
+
+C:\Windows\System32\inetsrv\appcmd.exe set config  -section:system.applicationHost/sites /+"siteDefaults.logFile.customFields.[logFieldName='Authorization',sourceName='Authorization',sourceType='RequestHeader']" /commit:apphost
+
+C:\Windows\System32\inetsrv\appcmd.exe set config  -section:system.applicationHost/sites /+"siteDefaults.logFile.customFields.[logFieldName='Content_Type',sourceName='Content_Type',sourceType='RequestHeader']" /commit:apphost
+
+C:\Windows\System32\inetsrv\appcmd.exe set config  -section:system.applicationHost/sites /+"siteDefaults.logFile.customFields.[logFieldName='HTTP_User_Agent',sourceName='HTTP_User_Agent',sourceType='ServerVariable']" /commit:apphost
+
+Write-output $date 'Setting IIS Logging veriables completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Setting IIS Logging veriables failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion IIS Logging
+
+#region Restrict inbound connections
+
+write-host "### Restrict inbound connections ###" -ForegroundColor Green
+
+try {
+
+Install-WindowsFeature  Web-Mgmt-Service
+
+Stop-service WMSVC
+Set-ItemProperty -Path  HKLM:\SOFTWARE\Microsoft\WebManagement\Server -Name EnableRemoteManagement  -Value 1
+Start-service WMSVC
+Write-output $date 'Restrict inbound connections task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Restrict inbound connections task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Restrict inbound connections
+
+#region Change Anonymous account
+
+write-host "### Change Anonymous account ###" -ForegroundColor Green
+
+try {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config -section:anonymousAuthentication /username:"" --password
+Write-output $date 'Change Anonymous account task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Change Anonymous account task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Change Anonymous account
+
+#region IIS Log NTFS Permissions
+
+write-host "### IIS Log NTFS Permissions ###" -ForegroundColor Green
+
+try {
+
+$Folders = "D:\Web_Logs" 
+
+Foreach ($Folder in $folders){ 
+ 
+$acl = Get-ACL -Path $folder 
+ 
+$acl.SetAccessRuleProtection($True, $True) #To allow inheritance change it as $acl.SetAccessRuleProtection($False, $True) 
+ 
+Set-Acl -Path $folder -AclObject $acl
+
+Write-output $date 'IIS Log NTFS Permissions task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+}
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'IIS Log NTFS Permissions failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+
+}
+
+#endregion IIS Log NTFS Permissions
+
+#region Request Filtering
+
+write-host "### Request Filtering###" -ForegroundColor Green
+
+try {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config /section:requestfiltering /fileExtensions.allowunlisted:false
+
+Write-output $date 'Request Filtering task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Request Filtering task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Request Filtering
+
+#region Allow URL and enter the path /MCD/index/
+
+write-host "### Allow URL and enter the path /MCD/index/ ###" -ForegroundColor Green
+
+try {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"alwaysAllowedUrls.[url='/MCD/index']"
+
+Write-output $date 'Allow URL and enter the path /MCD/index/ task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Allow URL and enter the path /MCD/index/ task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Allow URL and enter the path /MCD/index/
+
+#region File Name Extensions Remove .config and .asax
+
+write-host "### File Name Extensions Remove .config and .asax ###" -ForegroundColor Green
+
+try {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /-"fileExtensions.[fileExtension='.config',allowed='False']"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /-"fileExtensions.[fileExtension='.asax',allowed='False']"
+
+Write-output $date 'File Name Extensions Remove .config and .asax task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+}
+
+catch {
+
+Out-File -InputObject "$date $_ 'File Name Extensions Remove .config and .asax task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion File Name Extensions Remove .config and .asax
+
+#region Adding File Name Extensions in the "Request Filtering" on the default web site
+
+write-host "### Adding File Name Extensions in the Request Filtering on the default web site ###" -ForegroundColor Green
+
+try {
+
+if($CHC1411.Revision -cmatch "CHC14.1.1") {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.cshtml',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.svc',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.xml',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.config',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.asax',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.aspx',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.zip',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ocx',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.exe',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.dll',allowed='True']"
+}
+
+if($CHC142.Revision -cmatch "CHC14.2"){
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.cshtml',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.asax',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.aspx',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.svc',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.xml',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.zip',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ocx',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.exe',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.dll',allowed='True']"
+ }
+
+ if($CHC143.Revision -cmatch "CHC14.3"){
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.cshtml',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.asax',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.aspx',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.svc',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.xml',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.zip',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ocx',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.exe',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.dll',allowed='True']"
+ }
+
+ if($CHC15.Revision -cmatch "CHC15"){
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.zip',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.xml',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.svc',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ocx',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.exe',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.dll',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.cshtml',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.asax',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.aspx',allowed='True']"
+ }
+
+Write-output $date 'Adding File Name Extensions in the "Request Filtering" on the default web site task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_ 'Adding File Name Extensions in the Request Filtering on the default web site task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+ #endregion Adding File Name Extensions in the "Request Filtering" on the default web site
+
+#region Adding File Name Extensions to Identity Server
+
+write-host "### Adding File Name Extensions to Identity Server ###" -ForegroundColor Green
+
+try {
+
+if($CHC142.Revision -cmatch "CHC14.2") {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.config',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+}
+
+if($CHC143.Revision -cmatch "CHC14.3") {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+
+
+
+}
+
+if($CHC15.Revision -cmatch "CHC15") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.woff',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/IdentityServer/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.svg',allowed='True']"
+
+
+
+
+}
+
+Write-output $date 'Adding File Name Extensions to Identity Server task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Adding File Name Extensions to Identity Server task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Adding File Name Extensions to Identity Server
+
+#region Adding File extensions to WebClient because we removed the default web site so we have to add back
+
+write-host "### Adding File extensions to WebClient because we removed the default web site so we have to add back ###" -ForegroundColor Green
+
+try {
+
+if($CHC142.Revision -cmatch "CHC14.2") {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.config',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC143.Revision -cmatch "CHC14.3") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.config',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC15.Revision -cmatch "CHC15") {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.config',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+### Request Filtering###
+write-host "### Request Filtering###"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/WebClient/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+Write-output $date 'Adding File extensions to WebClient because we removed the default web site so we have to add back task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Adding File extensions to WebClient because we removed the default web site so we have to add back task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Adding File extensions to WebClient because we removed the default web site so we have to add back
+
+#region Adding File extensions to PTV because we removed the default web site so we have to add back
+
+write-host "### Adding File extensions to PTV because we removed the default web site so we have to add back ###" -ForegroundColor Green
+
+try {
+
+if($CHC142.Revision -cmatch "CHC14.2") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC143.Revision -cmatch "CHC14.3") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC15.Revision -cmatch "CHC15") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/PTV/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+Write-output $date 'Adding File extensions to PTV because we removed the default web site so we have to add back task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Adding File extensions to PTV because we removed the default web site so we have to add back task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Adding File extensions to PTV because we removed the default web site so we have to add back
+
+#region Adding File extensions to MobileGateway because we removed the default web site so we have to add back
+
+write-host "### Adding File extensions to MobileGateway because we removed the default web site so we have to add back ###" -ForegroundColor Green
+
+try {
+
+if($CHC142.Revision -cmatch "CHC14.2") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC143.Revision -cmatch "CHC14.3") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MobileGateway/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+Write-output $date 'Adding File extensions to MobileGateway because we removed the default web site so we have to add back task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Adding File extensions to MobileGateway because we removed the default web site so we have to add back task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Adding File extensions to MobileGateway because we removed the default web site so we have to add back
+
+#region Adding File extensions to MedconWebServices because we removed the default web site so we have to add back
+
+write-host "### Adding File extensions to MedconWebServices because we removed the default web site so we have to add back ###" -ForegroundColor Green
+
+try {
+
+if($CHC142.Revision -cmatch "CHC14.2") {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC143.Revision -cmatch "CHC14.3") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+
+}
+
+if($CHC15.Revision -cmatch "CHC15") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconWebServices/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+
+}
+
+Write-output $date 'Adding File extensions to MedconWebServices because we removed the default web site so we have to add back task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Adding File extensions to MedconWebServices because we removed the default web site so we have to add back task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Adding File extensions to MedconWebServices because we removed the default web site so we have to add back
+
+#region Adding File extensions to MedconSystemAnalytics because we removed the default web site so we have to add back
+
+write-host "### Adding File extensions to MedconSystemAnalytics because we removed the default web site so we have to add back ###" -ForegroundColor Green
+
+try {
+
+if($CHC142.Revision -cmatch "CHC14.2") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC143.Revision -cmatch "CHC14.3") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC15.Revision -cmatch "CHC15") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MedconSystemAnalytics/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+Write-output $date 'Adding File extensions to MedconSystemAnalytics because we removed the default web site so we have to add back task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Adding File extensions to MedconSystemAnalytics because we removed the default web site so we have to add back task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+
+#endregion Adding File extensions to MedconSystemAnalytics because we removed the default web site so we have to add back
+
+#region Adding File extensions to MDWeb because we removed the default web site so we have to add back
+
+write-host "### Adding File extensions to MDWeb because we removed the default web site so we have to add back ###" -ForegroundColor Green
+
+try {
+
+if($CHC142.Revision -cmatch "CHC14.2") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.config',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC143.Revision -cmatch "CHC14.3") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.config',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC15.Revision -cmatch "CHC15") {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.config',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MDWeb/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+Write-output $date 'Adding File extensions to MDWeb because we removed the default web site so we have to add back task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Adding File extensions to MDWeb because we removed the default web site so we have to add back task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Adding File extensions to MDWeb because we removed the default web site so we have to add back
+
+#region Adding File extensions to MCWebService because we removed the default web site so we have to add back
+
+write-host "### Adding File extensions to MCWebService because we removed the default web site so we have to add back ###" -ForegroundColor Green
+
+try {
+
+if($CHC142.Revision -cmatch "CHC14.2") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jsonl',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC143.Revision -cmatch "CHC14.3") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC15.Revision -cmatch "CHC15") {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/MCWebService/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+Write-output $date 'Adding File extensions to MCWebService because we removed the default web site so we have to add back task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Adding File extensions to MCWebService because we removed the default web site so we have to add back task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Adding File extensions to MCWebService because we removed the default web site so we have to add back
+
+#region Adding File extensions to CRV because we removed the default web site so we have to add back 
+
+write-host "### Adding File extensions to CRV because we removed the default web site so we have to add back ###" -ForegroundColor Green
+
+try {
+
+if($CHC142.Revision -cmatch "CHC14.2") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC143.Revision -cmatch "CHC14.3") {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+### Request Filtering ##
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC15.Revision -cmatch "CHC15") {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/CRV/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+Write-output $date 'Adding File extensions to CRV because we removed the default web site so we have to add back task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Adding File extensions to CRV because we removed the default web site so we have to add back task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Adding File extensions to CRV because we removed the default web site so we have to add back 
+
+#region Adding File extensions to ClientsLauncher because we removed the default web site so we have to add back
+
+write-host "### Adding File extensions to ClientsLauncher because we removed the default web site so we have to add back ###" -ForegroundColor Green
+
+try {
+
+if($CHC142.Revision -cmatch "CHC14.2") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.config',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC143.Revision -cmatch "CHC14.3") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.config',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC15.Revision -cmatch "CHC15") {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.config',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ClientsLauncher/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+Write-output $date 'Adding File extensions to ClientsLauncher because we removed the default web site so we have to add back task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Adding File extensions to ClientsLauncher because we removed the default web site so we have to add back task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Adding File extensions to ClientsLauncher because we removed the default web site so we have to add back
+
+#region Adding File extensions to AzureSbrHost because we removed the default web site so we have to add back
+
+write-host "### Adding File extensions to AzureSbrHost because we removed the default web site so we have to add back ###" -ForegroundColor Green
+
+try {
+
+if($CHC142.Revision -cmatch "CHC14.2") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC143.Revision -cmatch "CHC14.3") {
+
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.mao',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/AzureSbrHost/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+Write-output $date 'Adding File extensions to AzureSbrHost because we removed the default web site so we have to add back task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Adding File extensions to AzureSbrHost because we removed the default web site so we have to add back task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Adding File extensions to AzureSbrHost because we removed the default web site so we have to add bac
+
+#region Adding File extensions to ArchiveManagement because we removed the default web site so we have to add back 
+
+write-host "### Adding File extensions to ArchiveManagement because we removed the default web site so we have to add back ###" -ForegroundColor Green
+
+try {
+
+if($CHC142.Revision -cmatch "CHC14.2") {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC143.Revision -cmatch "CHC14.3") {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC15.Revision -cmatch "CHC15") {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.map',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ico',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.bmp',allowed='True']"
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/" /section:requestfiltering /allowhighbitcharacters:false
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/ArchiveManagement/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+Write-output $date 'Adding File extensions to ArchiveManagement because we removed the default web site so we have to add back task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Adding File extensions to ArchiveManagement because we removed the default web site so we have to add back task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Adding File extensions to ArchiveManagement because we removed the default web site so we have to add back 
+
+#region Adding File extensions to CRN because we removed the default web site so we have to add back 
+
+write-host "### Adding File extensions to CRN because we removed the default web site so we have to add back ###" -ForegroundColor Green
+
+$crnIISpath = "IIS:\Sites\Default Web Site\crn"
+$crnwebsite = Test-Path $crnIISpath
+
+try {
+
+if($CHC142.Revision -cmatch "CHC14.2" -and $crnwebsite ) {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.svg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.woff',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ttf',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.octet-stream',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.pdf',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.x-javascript',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpeg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.svg+xml',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.plain',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.xml',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" /section:requestfiltering /allowhighbitcharacters:true
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC143.Revision -cmatch "CHC14.3" -and $crnwebsite ) {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.svg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.woff',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ttf',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.octet-stream',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.pdf',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.x-javascript',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpeg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.svg+xml',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.plain',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.xml',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.htm',allowed='True']"
+
+
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" /section:requestfiltering /allowhighbitcharacters:true
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+if($CHC15.Revision -cmatch "CHC15" -and $crnwebsite) {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.css',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.js',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.svg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.woff',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.ttf',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.json',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.octet-stream',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.pdf',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.x-javascript',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.gif',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.jpeg',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.png',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.svg+xml',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.html',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.plain',allowed='True']"
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" -section:system.webServer/security/requestFiltering /+"fileExtensions.[fileExtension='.xml',allowed='True']"
+
+### Request Filtering###
+
+write-host "### Request Filtering###"
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/" /section:requestfiltering /allowhighbitcharacters:true
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site/crn/"/section:requestfiltering /fileExtensions.allowunlisted:false
+
+}
+
+Write-output $date 'Adding File extensions to CRN because we removed the default web site so we have to add back task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Adding File extensions to CRN because we removed the default web site so we have to add back task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Adding File extensions to CRN because we removed the default web site so we have to add back 
+
+#region Authorization Rules - remove All users - V-76771 V-100185
+
+
+write-host "### Authorization Rule Remove All users ###" -ForegroundColor Green
+
+try {
+
+$webConfigPath = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\config\web.config'
+$xml = [xml](Get-Content -Path $webConfigPath)
+$nodes = $xml.SelectNodes("//system.web/authorization/allow")
+if($nodes.Count -gt 0) {
+    $nodes | Foreach-Object { $_.ParentNode.RemoveChild($_) | Out-Null }
+    $xml.Save($webConfigPath)
+}
+
+Write-output $date 'Authorization Rule Remove All users task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Authorization Rules and remove All users task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Authorization Rules -  remove All users  - V-76771 V-100185
+
+#region The production IIS 8.5 (also for IIS 10.0) web server must utilize SHA2 encryption for Machine Key - V-76731
+
+Write-Host "### The production IIS 8.5 (also for IIS 10.0) web server must utilize SHA2 encryption for Machine Key ###" -ForegroundColor Green
+
+try {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config /section:system.web/machineKey /validation:HMACSHA256 /commit:machine
+
+Write-output $date 'The production IIS web server must utilize SHA2 encryption for Machine Key task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'The production IIS web server must utilize SHA2 encryption for Machine Key task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion The production IIS 8.5 (also for IIS 10.0) web server must utilize SHA2 encryption for Machine Key - V-76731
+
+#region Server 2019 Additional STIGS hardening for IIS 
+
+write-host "### Server 2019 Additional STIGS hardening for IIS ###" -ForegroundColor Green
+
+$osversion = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name "ProductName"
+$Server2019 = $osversion.ProductName
+$Server2016 = $osversion.ProductName
+
+#endregion Server 2019 Additional STIGS hardening for IIS 
+
+#region The maximum number of requests an application pool can process explicitly set to 10000 in Windows 2019 server IIS - V-100265
+
+write-host "### The maximum number of requests an application pool can process explicitly set to 10000 ###" -ForegroundColor Green
+
+try {
+
+$applicationPoolsPath = "/system.applicationHost/applicationPools"
+$applicationPools = Get-WebConfiguration $applicationPoolsPath
+
+if($Server2019 -cmatch "2019") {
+
+
+foreach ($appPool in $applicationPools.Collection)
+{
+    $appPoolPath = "$applicationPoolsPath/add[@name='$($appPool.Name)']"
+    Get-WebConfiguration "$appPoolPath/recycling/periodicRestart/@Requests" 
+    Set-WebConfiguration "$appPoolPath/recycling/periodicRestart/@Requests" -Value 10000
+}
+Write-output $date 'The maximum number of requests an application pool can process explicitly set to 10000 task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+}
+}
+
+catch {
+
+Out-File -InputObject "$date $_ 'The maximum number of requests an application pool can process explicitly set to 10000 task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion The maximum number of requests an application pool can process explicitly set to 10000 in Windows 2019 server IIS - V-100265
+
+#region The Idle Time-out monitor for each IIS 10.0 website must be enabled in Windows 2019 server IIS  24 hours - V-100245
+
+write-host "### The Idle Time-out monitor for each IIS 10.0 website must be enabled and set to 24 hours ###" -ForegroundColor Green
+
+try {
+
+$applicationPoolsPath = "/system.applicationHost/applicationPools"
+$applicationPools = Get-WebConfiguration $applicationPoolsPath
+
+if($Server2019 -cmatch "2019"){
+
+
+foreach ($appPool in $applicationPools.Collection)
+{
+    $appPoolPath = "$applicationPoolsPath/add[@name='$($appPool.Name)']"
+    Get-WebConfiguration "$appPoolPath/processModel/@idleTimeout" 
+    Set-WebConfiguration "$appPoolPath/processModel/@idleTimeout" -Value ( [TimeSpan]::FromMinutes(1440))
+}
+Write-output $date 'The Idle Time-out monitor for each IIS 10.0 website must be enabled and set to 24 hours task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+}
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'The Idle Time-out monitor for each IIS 10.0 website must be enabled and set to 24 hours task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion The Idle Time-out monitor for each IIS 10.0 website must be enabled in Windows 2019 server IIS  24 hours - V-100245
+
+#region Debugging and trace information used to diagnose the IIS 10.0 website must be disabled - V-100243 
+
+write-host "### Debugging and trace information used to diagnose the IIS 10.0 website must be disabled ###" -ForegroundColor Green
+
+try {
+
+if($Server2019 -cmatch "2019") {
+
+C:\Windows\System32\inetsrv\appcmd.exe set config "Default Web Site" -section:system.web/compilation /!debug:False
+
+Write-output $date 'Debugging and trace information used to diagnose the IIS 10.0 website must be disabled task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Debugging and trace information used to diagnose the IIS 10.0 website must be disabled task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Debugging and trace information used to diagnose the IIS 10.0 website must be disabled - V-100243 
+
+#region Private IIS 10.0 website must only accept Secure Socket Layer (SSL) connections - V-100195
+
+write-host "### Private IIS 10.0 website must only accept Secure Socket Layer (SSL) connections ###" -ForegroundColor Green
+
+try {
+
+if($Server2019 -cmatch "2019"){
+
+$ConfigSection = Get-IISConfigSection -SectionPath "system.webServer/security/access" -Location "Default Web Site"
+
+Set-IISConfigAttributeValue -AttributeName sslFlags -AttributeValue Ssl -ConfigElement $ConfigSection
+
+Write-output $date 'Private IIS 10.0 website must only accept Secure Socket Layer (SSL) connections task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Private IIS 10.0 website must only accept Secure Socket Layer (SSL) connections task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion Private IIS 10.0 website must only accept Secure Socket Layer (SSL) connections - V-10019
+
+#region The application pools rapid fail protection for each IIS 10.0 website must be enabled - V-100275
+
+write-host "###  The application pools rapid fail protection for each IIS 10.0 website must be enabled ###" -ForegroundColor Green
+
+try {
+
+if($Server2019 -cmatch "2019"){
+
+set-itemproperty iis:\apppools\DefaultAppPool -name  failure.rapidFailProtection -value True
+set-itemproperty iis:\apppools\MCD -name  failure.rapidFailProtection -value True
+set-itemproperty iis:\apppools\WebClient -name  failure.rapidFailProtection -value True
+set-itemproperty iis:\apppools\SystemAnalytics -name  failure.rapidFailProtection -value True
+set-itemproperty iis:\apppools\PTV -name  failure.rapidFailProtection -value True
+set-itemproperty iis:\apppools\MedconWebServices -name  failure.rapidFailProtection -value True
+set-itemproperty iis:\apppools\MDWeb -name  failure.rapidFailProtection -value True
+set-itemproperty iis:\apppools\MCWebService -name  failure.rapidFailProtection -value True
+set-itemproperty iis:\apppools\MCReporting -name  failure.rapidFailProtection -value True
+set-itemproperty iis:\apppools\ArchiveManagement -name  failure.rapidFailProtection -value True
+set-itemproperty iis:\apppools\IdentityServerCore -name  failure.rapidFailProtection -value True
+Write-output $date 'The application pools rapid fail protection for each IIS 10.0 website must be enabled task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'The application pools rapid fail protection for each IIS 10.0 website must be enabled task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion The application pools rapid fail protection for each IIS 10.0 website must be enabled - V-100275
+
+#region The IIS 10.0 web server must enable HTTP Strict Transport Security (HSTS) - V-100189
+
+write-host "###  The IIS 10.0 web server must enable HTTP Strict Transport Security (HSTS) ###" -ForegroundColor Green
+
+try {
+
+if($Server2019 -cmatch "2019"){
+
+C:\Windows\System32\inetsrv\appcmd.exe set config /section:system.webServer/httpProtocol /+"customHeaders.[name='Strict-Transport-Security',value='480']"
+C:\Windows\System32\inetsrv\appcmd.exe set config  -section:system.applicationHost/sites /siteDefaults.hsts.enabled:"True" /commit:apphost
+C:\Windows\System32\inetsrv\appcmd.exe set config  -section:system.applicationHost/sites /siteDefaults.hsts.max-age:"31536000" /commit:apphost
+C:\Windows\System32\inetsrv\appcmd.exe set config  -section:system.applicationHost/sites /siteDefaults.hsts.includeSubDomains:"True" /commit:apphost
+C:\Windows\System32\inetsrv\appcmd.exe set config  -section:system.applicationHost/sites /siteDefaults.hsts.redirectHttpToHttps:"True" /commit:apphost
+
+Write-output $date 'The IIS 10.0 web server must enable HTTP Strict Transport Security (HSTS) task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+
+if($Server2016 -cmatch "2016"){
+
+C:\Windows\System32\inetsrv\appcmd.exe set config /section:system.webServer/httpProtocol /+"customHeaders.[name='Strict-Transport-Security',value='max-age=31536000; includeSubDomains']"
+
+Write-output $date 'The IIS 10.0 web server must enable HTTP Strict Transport Security (HSTS) task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'The IIS 10.0 web server must enable HTTP Strict Transport Security (HSTS) task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion The IIS 10.0 web server must enable HTTP Strict Transport Security (HSTS) - V-100189
+
+#region In IIS 10.0 ASP.NET version must be removed from the HTTP Response Header information - V-241789
+
+write-host "###  In IIS 10.0 ASP.NET version must be removed from the HTTP Response Header information ###" -ForegroundColor Green
+
+try {
+
+if(($Server2019 -cmatch "2019") -or ($Server2016 -cmatch "2016")){
+
+Remove-WebConfigurationProperty -PSPath MACHINE/WEBROOT/APPHOST -Filter system.webServer/httpProtocol/customHeaders -Name . -AtElement @{name='X-Powered-By'}
+
+Write-output $date 'In IIS 10.0 ASP.NET version must be removed from the HTTP Response Header information task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'In IIS 10.0 ASP.NET version must be removed from the HTTP Response Header information task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion In IIS 10.0 ASP.NET version must be removed from the HTTP Response Header information - V-241789
+
+#region In IIS 10.0 HTTPAPI Server version must be removed from the HTTP Response Header information - V-241788
+
+write-host "### IIS 10.0 HTTPAPI Server version must be removed from the HTTP Response Header information ###" -ForegroundColor Green
+
+try {
+
+if(($Server2019 -cmatch "2019") -or ($Server2019 -cmatch "2016")){
+
+set-location HKLM:
+
+New-ItemProperty .\SYSTEM\CurrentControlSet\Services\HTTP\Parameters -Name DisableServerHeader -PropertyType DWord -Value 1}
+
+Write-output $date 'IIS 10.0 HTTPAPI Server version must be removed from the HTTP Response Header information task completed succesfully'  >>  d:\tcs_logs\IIS_Hardening.txt
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'IIS 10.0 HTTPAPI Server version must be removed from the HTTP Response Header information task failure'" -FilePath d:\tcs_logs\IIS_Hardening.txt -Append
+
+}
+
+#endregion In IIS 10.0 HTTPAPI Server version must be removed from the HTTP Response Header information -V-241788
+
+#region Restart IIS
+
+write-host "### Restarting IIS ###" -ForegroundColor Green
+
+C:\Windows\System32\iisreset.exe
+
+#endregion Restart IIS
+
+#region Installation logs
+
+Write-Host "### IIS hardening completed succesfully, Installation IIS hardening logs can be found in d:\tcs_logs\IIS_Hardening.txt" -ForegroundColor green
+
+#endregion Installation logs

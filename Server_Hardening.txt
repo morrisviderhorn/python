@@ -1,0 +1,1640 @@
+﻿### Script for server hardening ###
+
+param (
+  [switch] $SkipComputerRestart
+)
+try {
+
+#region enviorment var
+
+$scriptpath = $MyInvocation.MyCommand.Path
+$dir = Split-Path $scriptpath
+Write-host "My directory is $dir"
+# creating var to go back to original location
+pushd -Path $dir
+# creating var to go down one folder
+$newdir = Set-Location ..
+$newdir = Get-Location
+# setting new running location
+pushd -Path $newdir 
+$adobeTrustedSitesJson = (Get-Content -Path "$newdir\Configurations\AdobeTrustSites.json" -ErrorAction Stop |  Out-String | ConvertFrom-Json -Verbose)
+$jsonusersandgroups = (Get-Content -Path "$newdir\Configurations\Configuration.json" -ErrorAction Stop |  Out-String | ConvertFrom-Json -Verbose)
+
+$domain_users = $jsonusersandgroups.DomainUsersAndGroups.CHCDomainUsers
+$domain_admins = $jsonusersandgroups.DomainUsersAndGroups.CHCDomainAdmins
+$Enterprise_Admins = $jsonusersandgroups.DomainUsersAndGroups.CHCEnterpriseAdmins
+$CHC_SQLServerFileHouseKeepingProxy_Group = $jsonusersandgroups.DomainUsersAndGroups.CHCSqlServerFileHouseKeepingProxyGroup
+$CHC_LogonAsService_Group = $jsonusersandgroups.DomainUsersAndGroups.CHCLogonAsServiceGroup
+$chc_admins_group = $jsonusersandgroups.DomainUsersAndGroups.CHCAdminsGroup
+$CHCDpool = $jsonusersandgroups.DomainUsersAndGroups.CHCDPool
+$CHCRpool = $jsonusersandgroups.DomainUsersAndGroups.CHCRPool
+$CHCsqlservice = $jsonusersandgroups.DomainUsersAndGroups.CHCSqlService
+$CHCsqlagent = $jsonusersandgroups.DomainUsersAndGroups.CHCSqlAgent
+$CHCcrn = $jsonusersandgroups.DomainUsersAndGroups.CHCCognosServiceUser
+$CHCsqlproxy = $jsonusersandgroups.DomainUsersAndGroups.CHCSqlProxy
+$CHCService = $jsonusersandgroups.DomainUsersAndGroups.CHCService
+$CHCsetup = $jsonusersandgroups.DomainUsersAndGroups.CHCSetupUserName
+$CHCsqlSyncTableUser = $jsonusersandgroups.DomainUsersAndGroups.CHCSqlSyncTableUser
+
+$date = Get-Date -Format "dddd MM/dd/yyyy HH:mm K"
+
+#endregion enviorment var
+
+#region import modules
+
+. "$dir/SqlQueryUtility.ps1"
+. "$dir/Metadata.ps1" $newdir
+
+#endregion import modules
+
+#region Backup the Registry
+
+write-host "### Backup the Registry, regitry backup can take some time and it ranges from 60MB to 300MB ###" -ForegroundColor Green
+
+try {
+
+$Backupregistry = test-path C:\MIGTools\BackupRegistry
+
+if (-not $Backupregistry -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+New-Item -Path "c:\Migtools" -Name "BackupRegistry" -ItemType "directory" 
+
+reg export HKCR C:\Migtools\BackupRegistry\HKCR.Reg /y
+
+reg export HKCU C:\Migtools\BackupRegistry\HKCU.Reg /y
+
+reg export HKLM C:\Migtools\BackupRegistry\HKLM.Reg /y
+
+reg export HKU C:\Migtools\BackupRegistry\HKU.Reg /y
+
+reg export HKCC C:\Migtools\BackupRegistry\HKCC.Reg /y
+
+Write-output $date 'Registry Backup task completed Succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+}
+
+Catch
+
+ {
+
+Out-File -InputObject "$date $_ 'Registry Backup task failure'" -FilePath d:\tcs_logs\server_Hardening.txt -Append
+
+}
+
+#endregion Backup the Registry
+
+#region Check if MCKAdmin exist and if not, create MCKAdmin user account and add it to the local Administrators Group
+
+write-host "### Check if MCKAdmin exist and if not, create MCKAdmin user account and add it to the local Administrators Group ###" -ForegroundColor Green
+
+try {
+
+$password = ConvertTo-SecureString -String "Mckesson7702" -AsPlainText -Force
+$op = Get-LocalUser | Where-Object {$_.Name -eq "MCKAdmin"}
+$user = "MCKAdmin"
+
+if( -not $op -and ($jsonusersandgroups.HardeningSettings.IsDoD)){
+
+net user $user "Mckesson7702" /add
+Set-LocalUser -Name $user -PasswordNeverExpires $true -UserMayChangePassword $false
+Add-LocalGroupMember -Group "Administrators" -Member "MCKAdmin"
+
+Write-output $date 'MCKAdmin user task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+}
+
+Catch
+
+ {
+
+Out-File -InputObject "$date $_ 'MCKAdmin user task failure'" -FilePath d:\tcs_logs\server_hardening.txt -Append
+
+}
+
+#endregion Check if MCKAdmin exist and if not, create MCKAdmin user account and add it to the local Administrators Group
+
+#region Remove Active Directory "Domain Users" group from Local Users group
+
+Write-Host "### Remove Active Directory Domain Users group from Local Users group ###" -ForegroundColor Green
+
+try {
+
+$localusersgroupmember = Get-LocalGroupMember -Group "Users" | Where-Object {$_.name -eq "$domain_users"} 
+
+if ($localusers -ne $localusersgroupmember -and ($jsonusersandgroups.HardeningSettings.IsDoD)){
+
+Remove-LocalGroupMember -Group "Users" -Member "$domain_users" -ErrorAction Ignore
+
+Write-output $date 'Remove Active Directory "Domain Users" group from Local Users group task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+}
+
+Catch
+
+ {
+
+Out-File -InputObject "$date $_  'Remove Active Directory Domain Users group from Local Users group task failure'" -FilePath d:\tcs_logs\server_hardening.txt -Append
+
+}
+
+#endregion Remove Active Directory "Domain Users" group from Local Users group
+
+#region Create a local group with the name "DenyNetworkAccess" and include domain admins and enterprise admins as members of the group
+
+Write-Host "### Create a local group with the name DenyNetworkAccess and include domain admins and enterprise admins as members of the group ###" -ForegroundColor Green
+
+try {
+
+$DenyNetworkAccess = Get-LocalGroup | Where-Object {$_.name -eq "DenyNetworkAccess"}
+
+if ( -not $DenyNetworkAccess -and ($jsonusersandgroups.HardeningSettings.IsDoD)){
+
+New-LocalGroup -Name "DenyNetworkAccess"
+Add-LocalGroupMember -Group "DenyNetworkAccess" "$domain\domain admins"
+Add-LocalGroupMember -Group "DenyNetworkAccess" "$domain\enterprise admins"
+
+Write-output $date 'Create a local group with the name "DenyNetworkAccess" and include domain admins and enterprise admins as members of the group task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+}
+
+Catch
+
+ {
+
+Out-File -InputObject "$date $_ 'Create a local group with the name DenyNetworkAccess and include domain admins and enterprise admins as members of the group task failure'" -FilePath d:\tcs_logs\server_hardening.txt -Append
+
+
+}
+
+#endregion Create a local group with the name "DenyNetworkAccess" and include domain admins and enterprise admins as members of the group
+
+#region Disable PowerShell 2.0
+
+Write-Host "### Disable PowerShell 2.0 ###" -ForegroundColor Green
+
+try {
+
+$PowerShellv2feature = Get-WindowsOptionalFeature -Online -FeatureName 'MicrosoftWindowsPowerShellV2' | Where-Object {$_.State }
+
+if ($PowerShellv2feature.State -eq "Enabled" -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+Disable-WindowsOptionalFeature -FeatureName 'MicrosoftWindowsPowerShellV2' -Online -Remove -NoRestart
+
+Write-output $date 'Disable PowerShell 2.0 task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+
+}
+}
+
+Catch
+
+ {
+
+Out-File -InputObject "$date $_  'Disable PowerShell 2.0 task failure'" -FilePath d:\tcs_logs\server_hardening.txt -Append
+
+}
+
+#endregion Disable PowerShell 2.0
+
+#region Windows Speculative Execution Configuration Check (Hyper-Threading check)
+
+write-host "### Windows Speculative Execution Configuration Check (Hyper-Threading check) ###" -ForegroundColor Green
+
+try {
+
+$vCores = Get-WmiObject Win32_Processor | Measure -Property  NumberOfCores -Sum
+$vCores = $vCores.Sum
+$vLogicalCPUs = Get-WmiObject Win32_Processor | Measure -Property  NumberOfLogicalProcessors -Sum
+$vLogicalCPUs = $vLogicalCPUs.sum
+
+
+if ($vLogicalCPUs -gt $vCores) { 
+       $HT=“Hyper Threading: Enabled”
+    } 
+   else {  $HT=“Hyper Threading: Disabled”}
+
+
+
+if ($HT -cmatch "Hyper Threading: Disabled") {
+
+Set-location HKLM:
+
+New-ItemProperty '.\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management' -Name FeatureSettingsOverrideMask -PropertyType DWord -Value 0x00000003 
+
+New-ItemProperty '.\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management'  -name FeatureSettingsOverride -PropertyType DWord -Value 0x00002048
+
+}
+
+else {
+
+Set-location HKLM:
+
+New-ItemProperty '.\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management' -Name FeatureSettingsOverrideMask -PropertyType DWord -Value 0x00000003 
+
+New-ItemProperty '.\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management'  -name FeatureSettingsOverride -PropertyType DWord -Value 0x00000048
+
+
+}
+
+Write-output $date 'Windows Speculative Execution Configuration Check (Hyper-Threading check) succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_  'Windows Speculative Execution Configuration Check (Hyper-Threading check)'" -FilePath  d:\tcs_logs\server_hardening.txt -Append
+
+
+}
+
+
+#endregion Windows Speculative Execution Configuration Check (Hyper-Threading check) 
+
+#region Windows 2016 September 2017 Information Disclosure Vulnerability
+
+write-host "### Windows 2016 September 2017 Information Disclosure Vulnerability ###" -ForegroundColor Green
+
+try {
+
+$osversion = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name "ProductName"
+$Server2016 = $osversion.ProductName
+$Server2019 = $osversion.ProductName
+
+if($Server2016 -cmatch "2016" -or $Server2019 -cmatch "2019") {
+
+Set-location HKLM:
+
+New-Item '.\SOFTWARE\Microsoft\Internet Explorer\Main\FeatureControl' -Name FEATURE_ENABLE_PRINT_INFO_DISCLOSURE_FIX
+
+New-ItemProperty '.\SOFTWARE\Microsoft\Internet Explorer\Main\FeatureControl\FEATURE_ENABLE_PRINT_INFO_DISCLOSURE_FIX' -Name iexplore.exe -PropertyType DWord -Value 1
+
+New-Item '.\SOFTWARE\WOW6432Node\Microsoft\Internet Explorer\Main\FeatureControl' -Name FEATURE_ENABLE_PRINT_INFO_DISCLOSURE_FIX
+
+New-ItemProperty '.\SOFTWARE\WOW6432Node\Microsoft\Internet Explorer\Main\FeatureControl\FEATURE_ENABLE_PRINT_INFO_DISCLOSURE_FIX' -Name iexplore.exe -PropertyType DWord -Value 1
+
+Write-output $date 'Windows 2016 September 2017 Information Disclosure Vulnerability succesfully' >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+}
+
+catch {
+
+Out-File -InputObject "$date $_ 'Windows 2016 September 2017 Information Disclosure Vulnerability failure'" -FilePath d:\tcs_logs\server_Hardening.txt -Append                                    
+
+}
+
+#endregion Windows 2016 September 2017 Information Disclosure Vulnerability
+
+#region Running DCS registry on Windows 2019 or Windows 2016 Server and Windows 2012R2 registry import
+
+write-host "### Running DSC registry on Windows Server ###" -ForegroundColor Green
+
+try {
+
+$winrmservice = Get-Service -Name WinRM
+
+if ($winrmservice.Status -eq 'stopped') {
+
+Set-Service -Name WinRM -StartupType Automatic -ErrorAction Ignore
+Start-Service -Name WinRM
+
+}
+
+$osversion = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name "ProductName"
+$ServerOSversion = $osversion.ProductName
+
+$runningdsc = Get-DscConfigurationStatus -all -ErrorAction Ignore
+
+if ($runningdsc.status -eq 'success' -or 'Failure') {
+
+Remove-DscConfigurationDocument -Stage Current -Force
+Remove-DscConfigurationDocument -Stage Pending -Force
+Remove-DscConfigurationDocument -Stage Previous -Force
+
+}
+
+if($ServerOSversion -cmatch "2019" -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+invoke-command {& $newdir\OS\DoD_DSC\Servers\Server2019\DoDDSCServer19.bat}
+
+Write-output $date 'Running DOD 2019 DSC registry on Windows Server task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+if($ServerOSversion -cmatch "2016" -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+invoke-command {& $newdir\OS\DoD_DSC\Servers\Server2016\DoDDSCServer16.bat}
+
+Write-output $date 'Running DOD 2016 DSC registry on Windows Server task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+if ($ServerOSversion -cmatch "2012" -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+ write-host "### Import Registry settings to Windows 2012R2 ###" -ForegroundColor Green
+
+ Invoke-Command {
+
+ reg import $newdir\OS\DoD_DSC\Servers\Server2012R2\AdobeReader.reg
+
+ reg import $newdir\OS\DoD_DSC\Servers\Server2012R2\excelregistryfixes.reg
+ 
+ reg import $newdir\OS\DoD_DSC\Servers\Server2012R2\GoogleChromeHardening.reg
+
+ reg import $newdir\OS\DoD_DSC\Servers\Server2012R2\IE11STIGRegistryFixes.reg
+
+ reg import $newdir\OS\DoD_DSC\Servers\Server2012R2\IISRegistryHardening.reg
+
+ reg import $newdir\OS\DoD_DSC\Servers\Server2012R2\W2K12STIGRegistryFixes.reg
+ 
+ reg import $newdir\OS\DoD_DSC\Servers\Server2012R2\wordregistryfixes.reg
+
+ Write-output $date 'Importing Windows 2012 R2 registry on Windows Server task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+ 
+ }
+
+}
+
+if($ServerOSversion -cmatch "2016" -and (!$jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+invoke-command {& $newdir\OS\Commercial_DSC\Servers\Server2016\CommercialDSCServer16.bat}
+
+Write-output $date 'Running Commercial 2016 DSC registry on Windows Server task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+if($ServerOSversion -cmatch "2019" -and (!$jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+invoke-command {& $newdir\OS\Commercial_DSC\Servers\Server2019\CommercialDSCServer19.bat}
+
+Write-output $date 'Running Commercial 2019 DSC registry on Windows Server task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+}
+
+Catch
+
+ {
+
+Out-File -InputObject "$date $_  'Running DSC registry on Windows Server task failure'" -FilePath d:\tcs_logs\server_hardening.txt -Append
+
+}
+
+#endregion Running DSC registry on Windows 2019 or Windows 2016 Server and Windows 2012R2 registry import
+
+#region Copy ADMX and ADML files
+
+Write-Host "### Copy ADMX and ADML files ###" -ForegroundColor Green
+
+try {
+
+$osversion = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name "ProductName"
+$ServerOSversion = $osversion.ProductName
+
+if ($ServerOSversion -cmatch "2012 R2" -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+Get-ChildItem -Path $newdir\OS\DoD_GPO\ADMX\ | Copy-Item -Destination C:\windows\PolicyDefinitions -Force -Confirm:$false
+
+Get-ChildItem -Path $newdir\OS\DoD_GPO\ADMX\en-us | Copy-Item -Destination C:\windows\PolicyDefinitions\en-us -Force -Confirm:$false  
+
+Write-output $date 'Copy ADMX and ADML files task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+if (($ServerOSversion -cmatch "2016" -and ($jsonusersandgroups.HardeningSettings.IsDoD)) -or ($ServerOSversion -cmatch "2019" -and ($jsonusersandgroups.HardeningSettings.IsDoD))) {
+
+Get-ChildItem -Path $newdir\OS\DoD_GPO\ADMX\ | Copy-Item -Destination C:\windows\PolicyDefinitions -Exclude "CloudContent.admx" -Force -Confirm:$false
+
+Get-ChildItem -Path $newdir\OS\DoD_GPO\ADMX\en-us | Copy-Item -Destination C:\windows\PolicyDefinitions\en-us -Exclude "CloudContent.adml" -Force -Confirm:$false 
+
+Write-output $date 'Copy ADMX and ADML files task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt 
+
+}
+
+
+}
+
+Catch
+
+ {
+
+Out-File -InputObject "$date $_  'Copy ADMX and ADML files task failure'" -FilePath d:\tcs_logs\server_hardening.txt -Append
+
+}
+#endregion  Copy ADMX and ADML files
+
+#region Copy process mitigation settings.xml to c:\ drive
+
+Write-Host "### Copy process mitigation settings.xml to c:\ drive ###" -ForegroundColor Green
+
+try {
+
+if ($ServerOSversion -cmatch "2019" -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+Get-ChildItem -Path $newdir\OS\Mitigation_Process\settings.xml | Copy-Item -Destination c:\ -Force -Confirm:$false
+
+Write-output $date 'Copy process mitigation settings.xml to c:\ drive task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+
+}
+
+
+}
+
+Catch
+
+ {
+
+Out-File -InputObject "$date $_  'Copy process mitigation settings.xml to c:\ drive task failure'" -FilePath d:\tcs_logs\server_hardening.txt -Append
+
+}
+
+
+
+#endregion Copy process mitigation settings.xml to c:\ drive
+
+#region Remove unnecessary features and roles
+
+write-host "### Remove unnecessary features and roles ###" -ForegroundColor Green
+
+### V-205678 Windows server 2019 must not have the Fax Server role installed ###
+
+try {
+
+write-host "### Remove the Fax Server role if Installed ###" -ForegroundColor Green
+
+$faxserverfeature = Get-WindowsFeature -Name 'Fax' | Where-Object {$_.Installed }
+
+if ($faxserverfeature.Installed -ne $null -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+Get-WindowsFeature -Name 'Fax' | Remove-WindowsFeature
+
+Write-output $date 'Remove Fax from features and roles task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+### V-205679 Windows server 2019 must not have the Peer Name Resolution Protocol Installed ###
+
+write-host "### Remove the Peer Name Resolution Protocol if Installed ###" -ForegroundColor Green
+
+$peernameresoultionprtocol = Get-WindowsFeature -Name 'PNRP' | Where-Object {$_.Installed }
+
+if ($peernameresoultionprtocol.Installed -ne $null -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+Get-WindowsFeature -Name 'PNRP' | Remove-WindowsFeature
+
+Write-output $date 'Remove the Peer Name Resolution Protocol from features and roles task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+### V-205680 Windows server 2019 must not have the Simple TCP/IP Services Installed ###
+
+write-host "### Remove the Simple TCP/IP Services if Installed ###" -ForegroundColor Green
+
+$simpletcpipservice = Get-WindowsFeature -Name 'Simple-TCPIP' | Where-Object {$_.Installed }
+
+if ($simpletcpipservice.Installed -ne $null -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+Get-WindowsFeature -Name 'Simple-TCPIP' | Remove-WindowsFeature
+
+Write-output $date 'Remove the Simple TCP/IP Services from features and roles task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+### V-205681 Windows server 2019 must not have the TFTP Client installed ###
+
+write-host "### Remove the TFTP Client if Installed ###" -ForegroundColor Green
+
+$tftpclient = Get-WindowsFeature -Name 'TFTP-Client' | Where-Object {$_.Installed }
+
+if ($tftpclient.Installed -ne $null -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+Get-WindowsFeature -Name 'TFTP-Client' | Remove-WindowsFeature
+
+Write-output $date 'Remove the TFTP Client from features and roles task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+### V-205697 Windows server 2019 must not have the FTP service installed ###
+
+write-host "### Remove the FTP service if Installed ###" -ForegroundColor Green
+
+$ftpservice = Get-WindowsFeature -Name 'Web-Ftp-Service' | Where-Object {$_.Installed }
+
+if ($ftpservice.Installed -ne $null -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+Get-WindowsFeature -Name 'Web-Ftp-Service' | Remove-WindowsFeature
+
+Write-output $date 'Remove the FTP service from features and roles task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+### V-205698 Windows server 2019 must not have the Telnet Client installed ###
+
+write-host "### Remove the Telnet Client if Installed ###" -ForegroundColor Green
+
+$telnetclient = Get-WindowsFeature -Name 'Telnet-Client' | Where-Object {$_.Installed }
+
+if ($telnetclient.Installed -ne $null -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+Get-WindowsFeature -Name 'Telnet-Client' | Remove-WindowsFeature
+
+Write-output $date 'Remove the Telnet Client from features and roles task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+
+}
+
+Catch
+
+ {
+
+Out-File -InputObject "$date $_  'Remove one of the unnecessary features and roles task failure'" -FilePath d:\tcs_logs\server_hardening.txt -Append
+
+}
+
+#endregion Remove unnecessary features and roles
+
+#region Copy local policy files
+
+Write-Host "### Copy local policy files ###" -ForegroundColor Green
+
+try {
+
+
+$osversion = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name "ProductName"
+$ServerOSversion = $osversion.ProductName
+$gpofiles = Get-ChildItem -Path C:\Windows\System32\grouppolicy
+
+if ($gpofiles) {
+
+Get-ChildItem -Path C:\Windows\System32\grouppolicy | Remove-Item -Force -Recurse -Confirm:$false
+
+}
+
+if ($ServerOSversion -cmatch "2019" -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+Get-ChildItem -Path $newdir\OS\DoD_GPO\Servers\Server2019\ | Copy-Item -Destination C:\windows\System32\GroupPolicy -Recurse -Force -Confirm:$false
+
+Write-output $date 'Copy local policy files task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt 
+
+}
+
+if ($ServerOSversion -cmatch "2016" -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+Get-ChildItem -Path $newdir\OS\DoD_GPO\Servers\Server2016\ | Copy-Item -Destination C:\windows\System32\GroupPolicy -Recurse -Force -Confirm:$false 
+
+Write-output $date 'Copy local policy files task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+if($ServerOSversion -cmatch "2012 R2" -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+Get-ChildItem -Path $newdir\OS\DoD_GPO\Servers\Server2012R2\ | Copy-Item -Destination C:\windows\System32\GroupPolicy -Recurse -Force -Confirm:$false 
+
+Write-output $date 'Copy local policy files task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+}
+
+Catch
+
+ {
+
+Out-File -InputObject "$date $_  'Copy local policy files task failure'" -FilePath d:\tcs_logs\server_hardening.txt -Append
+}
+
+#endregion  Copy local policy files
+
+#region Install IIS Hardening
+
+Write-Host "### Install IIS Hardening ###" -ForegroundColor Green
+
+try {
+
+$wmiDomain = ( (Get-WmiObject Win32_ComputerSystem).Domain)
+$domain = $wmiDomain.Split(".")[0]
+
+$RegPath = Test-path -Path 'HKLM:\SOFTWARE\WOW6432Node\Medcon\TCS\features'
+
+if($RegPath -eq "True"){
+
+$web = Get-ItemProperty -Path 'HKLM:\SOFTWARE\WOW6432Node\Medcon\TCS\features' -Name 'WebServer'
+
+}
+
+if ($web.WebServer -eq 1 -and ($jsonusersandgroups.HardeningSettings.IsDoD)){
+
+invoke-command {& $newdir\IIS\DoD-IIS-Hardening.bat}
+
+Write-output $date 'Install IIS Hardening task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+
+
+}
+
+Catch
+
+ {
+
+Out-File -InputObject "$date $_  'Install IIS Hardening task failure'" -FilePath d:\tcs_logs\server_hardening.txt -Append
+
+}
+
+#endregion Install IIS Hardening
+
+#region Cipher Hardening
+
+Write-Host "### Cipher Hardening ###" -ForegroundColor Green
+
+try {
+
+$wmiDomain = ( (Get-WmiObject Win32_ComputerSystem).Domain)
+$domain = $wmiDomain.Split(".")[0]
+
+$RegPath = Test-path -Path 'HKLM:\SOFTWARE\WOW6432Node\Medcon\TCS\features'
+
+if($RegPath -eq "True"){
+
+$web = Get-ItemProperty -Path 'HKLM:\SOFTWARE\WOW6432Node\Medcon\TCS\features' -Name 'WebServer'
+$app = Get-ItemProperty -Path 'HKLM:\SOFTWARE\WOW6432Node\Medcon\TCS\features' -Name 'AppServer'
+$db = Get-ItemProperty -Path 'HKLM:\SOFTWARE\WOW6432Node\Medcon\TCS\features' -Name 'TCS Database Server'
+
+}
+
+if ($web.WebServer -eq 1 -or $app.AppServer -eq 1 -or $db.'TCS Database Server' -eq 1 ){
+
+reg import $newdir\OS\Cipher\Cipher_Hardening.reg
+
+reg import $newdir\OS\Cipher\Cipher_Suite_Hardening.reg
+
+reg import $newdir\OS\Cipher\Cipher_Key_Hardening.reg
+
+$NETVERSION = test-path 'HKLM:\SOFTWARE\Microsoft\.NETFramework\v4.0.30319'
+
+if ($NETVERSION) {
+
+new-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\.NETFramework\v4.0.30319'  -Name "SystemDefaultTlsVersions" -Value 1 -PropertyType DWord
+
+} 
+
+Write-output $date 'Cipher Hardening task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+}
+
+Catch
+
+ {
+
+Out-File -InputObject "$date $_  'Cipher Hardening task failure'" -FilePath d:\tcs_logs\server_hardening.txt -Append
+
+}
+
+#endregion Cipher Hardening
+
+#region Configure SDB file
+
+Write-Host "### Configure SDB file ###" -ForegroundColor Green
+
+try {
+
+$osversion = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name "ProductName"
+$ServerOSversion = $osversion.ProductName
+
+$sdbfile2019 = Get-ChildItem -Path $newdir\OS\SDB\Servers\Server2019\server2019.sdb
+$sdbfilexml2019 = Get-ChildItem -Path $newdir\OS\SDB\Servers\Server2019\server2019.xml
+
+$sdbfile2016 = Get-ChildItem -Path $newdir\OS\SDB\Servers\Server2016\server2016.sdb
+$sdbfilexml2016 = Get-ChildItem -Path $newdir\OS\SDB\Servers\Server2016\server2016.xml
+
+$sdbfile2012 = Get-ChildItem -Path $newdir\OS\SDB\Servers\Server2012R2\db.sdb
+$sdbfilexml2012 = Get-ChildItem -Path $newdir\OS\SDB\Servers\Server2012R2\db.xml
+
+if ($ServerOSversion -cmatch "2019" -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+& $dir\secedit.exe /configure /db  $sdbfile2019 /overwrite /log $sdbfilexml2019 /overwrite
+
+Write-output $date 'Configure SDB file task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+if ($ServerOSversion -cmatch "2016" -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+& $dir\secedit.exe /configure /db  $sdbfile2016 /overwrite /log $sdbfilexml2016 /overwrite
+
+Write-output $date 'Configure SDB file task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+if ($ServerOSversion -cmatch "2012" -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+
+& $dir\SecEdit2k12.exe /configure /db  $sdbfile2012 /overwrite /log $sdbfilexml2012 /overwrite
+
+Write-output $date 'Configure SDB file task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+
+}
+
+}
+
+Catch
+
+ {
+
+Out-File -InputObject "$date $_  'Configure SDB file task failure'" -FilePath d:\tcs_logs\server_hardening.txt -Append
+
+}
+
+
+#endregion Configure SDB file
+
+#region add Web Server FQDN to trusted sites
+
+Write-Host "Settings trusted sites at $env:COMPUTERNAME" -ForegroundColor Green
+try {
+  $query = "SELECT field_value FROM [dbo].[T_SITE_CONFIGURATION] WHERE field_name = 'Site.Config.CisServerHost'"
+  $dataSource = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\WOW6432Node\Medcon\Settings\Database').'Database Server Name'
+  $webServerAddress = (Invoke-SQLCommand -DataSource $dataSource -Database 'Medcon' -SqlCommand $query).Tables[0].Rows[0].'field_value'
+  if (!$webServerAddress) {
+    throw "Can't get WebServerAddress from DB -> [Medcon].[dbo].[T_SITE_CONFIGURATION]. Make sure the field_name Site.Config.CisServerHost has a value"
+  }
+
+  $internetSettingsRegPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\Internet Settings\ZoneMapKey'
+  if(!(Test-Path $internetSettingsRegPath)) {
+    New-Item -Path $internetSettingsRegPath -Force | Out-Null
+  }
+
+  Set-ItemProperty -Path $internetSettingsRegPath -Name $webServerAddress -Value '2' -Type 'String'
+
+  Write-output $date 'Add Web Server URL (FQDN) task completed succesfully'  >>  d:\tcs_logs\server_Hardening.txt
+}
+catch {
+ Out-File -InputObject "$date $_  'Add Web Server URL (FQDN) task failure'" -FilePath d:\tcs_logs\server_hardening.txt -Append 
+}
+
+#endregion add  Web Server FQDN to trusted sites
+
+#region Add DB server address to the Adobe Trust Sites
+
+Write-Host "### Add DB server address to the Adobe Trust Sites ###" -ForegroundColor Green
+
+try {
+  
+    if ([Environment]::Is64BitOperatingSystem) {
+      $dbSettingsRegKey = 'HKLM:\SOFTWARE\WOW6432Node\Medcon\Settings\DataBase'
+    }
+    else {
+      $dbSettingsRegKey = 'HKLM:\SOFTWARE\Medcon\Settings\DataBase'
+    }
+    
+    $dbServerName = (Get-ItemProperty -Path $dbSettingsRegKey).'Database Server Name'
+    if(!$dbServerName) {
+      throw "Database Server Name isn't set. Check registry path: '$dbSettingsRegKey'"
+    }
+
+    $registryItems = $adobeTrustedSitesJson.RegistryItems
+    foreach ($item in $registryItems) {
+      $fullPath = Join-Path -Path $adobeTrustedSitesJson.RegistryRoot -ChildPath $item.Key
+      if(!(Test-Path $fullPath)) {
+        New-Item -Path $fullPath -Force | Out-Null
+      }
+
+      Set-ItemProperty -Path $fullPath -Name $item.Name -Value $dbServerName -Type 'String' -Force | Out-Null
+    }
+
+    Write-output $date 'Add DB server address to the Adobe Trust Sites task completed succesfully'  >>  d:\tcs_logs\server_Hardening.txt
+  
+}
+catch {
+  Out-File -InputObject "$date $_  'Add DB server address to the Adobe Trust Sites task failure'" -FilePath d:\tcs_logs\server_hardening.txt -Append
+}
+
+
+#endregion add DB server address to the Adobe Trust Sites
+
+#region Disable TLS (1.0)
+
+Write-Host "### Disable TLS (1.0) ###" -ForegroundColor Green
+
+try {
+
+$osversion = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name "ProductName"
+$ServerOSversion = $osversion.ProductName
+
+
+if ($ServerOSversion -cmatch "2019" -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+& $dir\tls.ps1 -Proto TLS10 -Target Server -Action Disable
+}
+
+if ($ServerOSversion -cmatch "2016" -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+& $dir\tls.ps1 -Proto TLS10 -Target Server -Action Disable
+
+}
+
+if ($ServerOSversion -cmatch "2012" -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+
+& $dir\tls.ps1 -Proto TLS10 -Target Server -Action Disable
+
+
+}
+
+Write-output $date 'Disable TLS (1.0) task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+Catch
+
+ {
+
+Out-File -InputObject "$date $_  'Disable TLS (1.0) task failure'" -FilePath  d:\tcs_logs\server_hardening.txt -Append
+
+} 
+
+#endregion Disable TLS (1.0) 
+
+#region GPO configuration - Adding Domain User and Group accounts to the local GPO settings
+ 
+Write-Host "### GPO configuration - Adding Domain User and Group accounts to the local GPO settings ###" -ForegroundColor Green
+
+try {
+
+### Log on as a batch job ###
+
+Write-Host "### Log on as a batch job ###" -ForegroundColor Green
+
+Function Add-UserToLoginAsBatch ($UserID) {
+    <#
+    .SYNOPSIS
+    When run administratively this will add a user to the local system's login as batch job rights security policy.
+    .DESCRIPTION
+    When run administratively this will add a user to the local system's login as batch job rights security policy.
+    .PARAMETER UserID
+    User ID to add to the local system's login as batch job rights security policy.
+    .LINK
+    http://www.the-little-things.net   
+    .NOTES
+    Version:
+        1.0.0 - Initial release
+    Author:
+        Zachary Loeber
+    Respect: 
+        Code mildy modified from 
+        http://www.morgantechspace.com/2014/03/Set-Logon-as-batch-job-rights-to-User-by-Powershell-CSharp-CMD.html
+
+    .EXAMPLE
+    Add-UserToLoginAsBatch 'test.user'
+
+    Description
+    -----------
+    Adds the local user test.user to the login as batch job rights on the local machine.
+    #>
+    
+    $CSharpCode = @'
+    using System;
+    // using System.Globalization;
+    using System.Text;
+    using System.Runtime.InteropServices;
+    public class LsaWrapper
+    {
+    // Import the LSA functions
+     
+    [DllImport("advapi32.dll", PreserveSig = true)]
+    private static extern UInt32 LsaOpenPolicy(
+        ref LSA_UNICODE_STRING SystemName,
+        ref LSA_OBJECT_ATTRIBUTES ObjectAttributes,
+        Int32 DesiredAccess,
+        out IntPtr PolicyHandle
+        );
+     
+    [DllImport("advapi32.dll", SetLastError = true, PreserveSig = true)]
+    private static extern long LsaAddAccountRights(
+        IntPtr PolicyHandle,
+        IntPtr AccountSid,
+        LSA_UNICODE_STRING[] UserRights,
+        long CountOfRights);
+     
+    [DllImport("advapi32")]
+    public static extern void FreeSid(IntPtr pSid);
+     
+    [DllImport("advapi32.dll", CharSet = CharSet.Auto, SetLastError = true, PreserveSig = true)]
+    private static extern bool LookupAccountName(
+        string lpSystemName, string lpAccountName,
+        IntPtr psid,
+        ref int cbsid,
+        StringBuilder domainName, ref int cbdomainLength, ref int use);
+     
+    [DllImport("advapi32.dll")]
+    private static extern bool IsValidSid(IntPtr pSid);
+     
+    [DllImport("advapi32.dll")]
+    private static extern long LsaClose(IntPtr ObjectHandle);
+     
+    [DllImport("kernel32.dll")]
+    private static extern int GetLastError();
+     
+    [DllImport("advapi32.dll")]
+    private static extern long LsaNtStatusToWinError(long status);
+     
+    // define the structures
+     
+    private enum LSA_AccessPolicy : long
+    {
+        POLICY_VIEW_LOCAL_INFORMATION = 0x00000001L,
+        POLICY_VIEW_AUDIT_INFORMATION = 0x00000002L,
+        POLICY_GET_PRIVATE_INFORMATION = 0x00000004L,
+        POLICY_TRUST_ADMIN = 0x00000008L,
+        POLICY_CREATE_ACCOUNT = 0x00000010L,
+        POLICY_CREATE_SECRET = 0x00000020L,
+        POLICY_CREATE_PRIVILEGE = 0x00000040L,
+        POLICY_SET_DEFAULT_QUOTA_LIMITS = 0x00000080L,
+        POLICY_SET_AUDIT_REQUIREMENTS = 0x00000100L,
+        POLICY_AUDIT_LOG_ADMIN = 0x00000200L,
+        POLICY_SERVER_ADMIN = 0x00000400L,
+        POLICY_LOOKUP_NAMES = 0x00000800L,
+        POLICY_NOTIFICATION = 0x00001000L
+    }
+     
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LSA_OBJECT_ATTRIBUTES
+    {
+        public int Length;
+        public IntPtr RootDirectory;
+        public readonly LSA_UNICODE_STRING ObjectName;
+        public UInt32 Attributes;
+        public IntPtr SecurityDescriptor;
+        public IntPtr SecurityQualityOfService;
+    }
+     
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LSA_UNICODE_STRING
+    {
+        public UInt16 Length;
+        public UInt16 MaximumLength;
+        public IntPtr Buffer;
+    }
+    /// 
+    //Adds a privilege to an account
+     
+    /// Name of an account - "domain\account" or only "account"
+    /// Name ofthe privilege
+    /// The windows error code returned by LsaAddAccountRights
+    public long SetRight(String accountName, String privilegeName)
+    {
+        long winErrorCode = 0; //contains the last error
+     
+        //pointer an size for the SID
+        IntPtr sid = IntPtr.Zero;
+        int sidSize = 0;
+        //StringBuilder and size for the domain name
+        var domainName = new StringBuilder();
+        int nameSize = 0;
+        //account-type variable for lookup
+        int accountType = 0;
+     
+        //get required buffer size
+        LookupAccountName(String.Empty, accountName, sid, ref sidSize, domainName, ref nameSize, ref accountType);
+     
+        //allocate buffers
+        domainName = new StringBuilder(nameSize);
+        sid = Marshal.AllocHGlobal(sidSize);
+     
+        //lookup the SID for the account
+        bool result = LookupAccountName(String.Empty, accountName, sid, ref sidSize, domainName, ref nameSize,
+                                        ref accountType);
+     
+        //say what you're doing
+        Console.WriteLine("LookupAccountName result = " + result);
+        Console.WriteLine("IsValidSid: " + IsValidSid(sid));
+        Console.WriteLine("LookupAccountName domainName: " + domainName);
+     
+        if (!result)
+        {
+            winErrorCode = GetLastError();
+            Console.WriteLine("LookupAccountName failed: " + winErrorCode);
+        }
+        else
+        {
+            //initialize an empty unicode-string
+            var systemName = new LSA_UNICODE_STRING();
+            //combine all policies
+            var access = (int) (
+                                    LSA_AccessPolicy.POLICY_AUDIT_LOG_ADMIN |
+                                    LSA_AccessPolicy.POLICY_CREATE_ACCOUNT |
+                                    LSA_AccessPolicy.POLICY_CREATE_PRIVILEGE |
+                                    LSA_AccessPolicy.POLICY_CREATE_SECRET |
+                                    LSA_AccessPolicy.POLICY_GET_PRIVATE_INFORMATION |
+                                    LSA_AccessPolicy.POLICY_LOOKUP_NAMES |
+                                    LSA_AccessPolicy.POLICY_NOTIFICATION |
+                                    LSA_AccessPolicy.POLICY_SERVER_ADMIN |
+                                    LSA_AccessPolicy.POLICY_SET_AUDIT_REQUIREMENTS |
+                                    LSA_AccessPolicy.POLICY_SET_DEFAULT_QUOTA_LIMITS |
+                                    LSA_AccessPolicy.POLICY_TRUST_ADMIN |
+                                    LSA_AccessPolicy.POLICY_VIEW_AUDIT_INFORMATION |
+                                    LSA_AccessPolicy.POLICY_VIEW_LOCAL_INFORMATION
+                                );
+            //initialize a pointer for the policy handle
+            IntPtr policyHandle = IntPtr.Zero;
+     
+            //these attributes are not used, but LsaOpenPolicy wants them to exists
+            var ObjectAttributes = new LSA_OBJECT_ATTRIBUTES();
+            ObjectAttributes.Length = 0;
+            ObjectAttributes.RootDirectory = IntPtr.Zero;
+            ObjectAttributes.Attributes = 0;
+            ObjectAttributes.SecurityDescriptor = IntPtr.Zero;
+            ObjectAttributes.SecurityQualityOfService = IntPtr.Zero;
+     
+            //get a policy handle
+            uint resultPolicy = LsaOpenPolicy(ref systemName, ref ObjectAttributes, access, out policyHandle);
+            winErrorCode = LsaNtStatusToWinError(resultPolicy);
+     
+            if (winErrorCode != 0)
+            {
+                Console.WriteLine("OpenPolicy failed: " + winErrorCode);
+            }
+            else
+            {
+                //Now that we have the SID an the policy,
+                //we can add rights to the account.
+     
+                //initialize an unicode-string for the privilege name
+                var userRights = new LSA_UNICODE_STRING[1];
+                userRights[0] = new LSA_UNICODE_STRING();
+                userRights[0].Buffer = Marshal.StringToHGlobalUni(privilegeName);
+                userRights[0].Length = (UInt16) (privilegeName.Length*UnicodeEncoding.CharSize);
+                userRights[0].MaximumLength = (UInt16) ((privilegeName.Length + 1)*UnicodeEncoding.CharSize);
+     
+                //add the right to the account
+                long res = LsaAddAccountRights(policyHandle, sid, userRights, 1);
+                winErrorCode = LsaNtStatusToWinError(res);
+                if (winErrorCode != 0)
+                {
+                    Console.WriteLine("LsaAddAccountRights failed: " + winErrorCode);
+                }
+     
+                LsaClose(policyHandle);
+            }
+            FreeSid(sid);
+        }
+     
+        return winErrorCode;
+    }
+    }
+    
+    public class AddUserToLoginAsBatch
+    {
+        public static void GrantUserLogonAsBatchJob(string userName)
+        {
+            try
+            {
+                LsaWrapper lsaUtility = new LsaWrapper();
+         
+                lsaUtility.SetRight(userName, "SeBatchLogonRight");
+         
+                Console.WriteLine("Logon as batch job right is granted successfully to " + userName);
+            }            
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+            }
+        }
+    }
+'@
+    try {
+        Add-Type -ErrorAction Stop -Language:CSharpVersion3 -TypeDefinition $CSharpCode
+    }
+    catch {
+        Write-Error $_.Exception.Message
+        break
+    }
+    [AddUserToLoginAsBatch]::GrantUserLogonAsBatchJob($UserID)
+}
+
+if ($jsonusersandgroups.HardeningSettings.IsDoD) {
+
+Add-UserToLoginAsBatch $chcsetup
+Add-UserToLoginAsBatch $CHCservice
+Add-UserToLoginAsBatch $CHCDpool
+Add-UserToLoginAsBatch $CHCRpool
+Add-UserToLoginAsBatch $CHCsqlproxy
+Add-UserToLoginAsBatch $CHCcrn
+
+Write-output $date 'Adding Log on as a batch job accounts to the local GPO settings task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+### Replace Level Token ###
+
+Write-Host "### Replace Level Token ###" -ForegroundColor Green
+
+import-module $dir\UserRightsAssignment.psm1
+
+function GrantUserRight {
+  <#
+  .SYNOPSIS
+  Assigns user rights to accounts
+  .DESCRIPTION
+  Assigns one or more user rights (privileges) to one or more accounts. If you specify privileges already granted to the account, they are ignored.
+  .EXAMPLE
+  Grant-UserRight "bilbo.baggins" SeServiceLogonRight
+ 
+  Grants bilbo.baggins the "Logon as a service" right on the local computer.
+  .EXAMPLE
+  Grant-UserRight -Account "Edward","Karen" -Right SeServiceLogonRight,SeCreateTokenPrivilege -Computer TESTPC
+ 
+  Grants both Edward and Karen, "Logon as a service" and "Create a token object" rights on the TESTPC system.
+  .PARAMETER Account
+  Logon name of the account. More than one account can be listed. If the account is not found on the computer, the default domain is searched. To specify a domain, you may use either "DOMAIN\username" or "username@domain.dns" formats.
+  .PARAMETER Right
+  Name of the right to grant. More than one right may be listed.
+ 
+  Possible values:
+    SeTrustedCredManAccessPrivilege Access Credential Manager as a trusted caller
+    SeNetworkLogonRight Access this computer from the network
+    SeTcbPrivilege Act as part of the operating system
+    SeMachineAccountPrivilege Add workstations to domain
+    SeIncreaseQuotaPrivilege Adjust memory quotas for a process
+    SeInteractiveLogonRight Allow log on locally
+    SeRemoteInteractiveLogonRight Allow log on through Remote Desktop Services
+    SeBackupPrivilege Back up files and directories
+    SeChangeNotifyPrivilege Bypass traverse checking
+    SeSystemtimePrivilege Change the system time
+    SeTimeZonePrivilege Change the time zone
+    SeCreatePagefilePrivilege Create a pagefile
+    SeCreateTokenPrivilege Create a token object
+    SeCreateGlobalPrivilege Create global objects
+    SeCreatePermanentPrivilege Create permanent shared objects
+    SeCreateSymbolicLinkPrivilege Create symbolic links
+    SeDebugPrivilege Debug programs
+    SeDenyNetworkLogonRight Deny access this computer from the network
+    SeDenyBatchLogonRight Deny log on as a batch job
+    SeDenyServiceLogonRight Deny log on as a service
+    SeDenyInteractiveLogonRight Deny log on locally
+    SeDenyRemoteInteractiveLogonRight Deny log on through Remote Desktop Services
+    SeEnableDelegationPrivilege Enable computer and user accounts to be trusted for delegation
+    SeRemoteShutdownPrivilege Force shutdown from a remote system
+    SeAuditPrivilege Generate security audits
+    SeImpersonatePrivilege Impersonate a client after authentication
+    SeIncreaseWorkingSetPrivilege Increase a process working set
+    SeIncreaseBasePriorityPrivilege Increase scheduling priority
+    SeLoadDriverPrivilege Load and unload device drivers
+    SeLockMemoryPrivilege Lock pages in memory
+    SeBatchLogonRight Log on as a batch job
+    SeServiceLogonRight Log on as a service
+    SeSecurityPrivilege Manage auditing and security log
+    SeRelabelPrivilege Modify an object label
+    SeSystemEnvironmentPrivilege Modify firmware environment values
+    SeManageVolumePrivilege Perform volume maintenance tasks
+    SeProfileSingleProcessPrivilege Profile single process
+    SeSystemProfilePrivilege Profile system performance
+    SeUnsolicitedInputPrivilege "Read unsolicited input from a terminal device"
+    SeUndockPrivilege Remove computer from docking station
+    SeAssignPrimaryTokenPrivilege Replace a process level token
+    SeRestorePrivilege Restore files and directories
+    SeShutdownPrivilege Shut down the system
+    SeSyncAgentPrivilege Synchronize directory service data
+    SeTakeOwnershipPrivilege Take ownership of files or other objects
+  .PARAMETER Computer
+  Specifies the name of the computer on which to run this cmdlet. If the input for this parameter is omitted, then the cmdlet runs on the local computer.
+  .INPUTS
+  String Account
+  PS_LSA.Rights Right
+  String Computer
+  .OUTPUTS
+  .LINK
+  http://msdn.microsoft.com/en-us/library/ms721786.aspx
+  http://msdn.microsoft.com/en-us/library/bb530716.aspx
+  #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Position=0, Mandatory=$true, ValueFromPipelineByPropertyName=$true, ValueFromPipeline=$true)]
+        [Alias('User','Username')][String[]] $Account,
+        [Parameter(Position=1, Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
+        [Alias('Privilege')] [PS_LSA.Rights[]] $Right,
+        [Parameter(ValueFromPipelineByPropertyName=$true, HelpMessage="Computer name")]
+        [Alias('System','ComputerName','Host')][String] $Computer
+    )
+    process {
+        $lsa = New-Object PS_LSA.LsaWrapper($Computer)
+        foreach ($Acct in $Account) {
+            foreach ($Priv in $Right) {
+                $lsa.AddPrivilege($Acct,$Priv)
+            }
+        }
+    }
+} # Assigns user rights to accounts
+
+$RegPath = Test-path -Path 'HKLM:\SOFTWARE\WOW6432Node\Medcon\TCS\features'
+
+if($RegPath -eq "True"){
+
+$db = Get-ItemProperty -Path 'HKLM:\SOFTWARE\WOW6432Node\Medcon\TCS\features' -Name 'TCS Database Server'
+
+}
+
+if ($jsonusersandgroups.HardeningSettings.IsDoD -and $db.'TCS Database Server' -eq 1) {
+
+GrantUserRight -account $CHCsqlagent SeAssignPrimaryTokenPrivilege
+
+}
+
+### Log on as a service ###
+
+Write-Host "### Log on as a service ###" -ForegroundColor Green
+
+if ($jsonusersandgroups.HardeningSettings.IsDoD) {
+
+& "$((Get-ChildItem -Path $newdir\HardeningScript -Filter "*LogonAsService.ps1").FullName)" -accountToAdd "$CHCsetup"
+
+& "$((Get-ChildItem -Path $newdir\HardeningScript -Filter "*LogonAsService.ps1").FullName)"  -accountToAdd "$CHCsqlagent"
+
+& "$((Get-ChildItem -Path $newdir\HardeningScript -Filter "*LogonAsService.ps1").FullName)"  -accountToAdd "$CHCsqlservice"
+
+& "$((Get-ChildItem -Path $newdir\HardeningScript -Filter "*LogonAsService.ps1").FullName)"  -accountToAdd "$CHCservice"
+
+& "$((Get-ChildItem -Path $newdir\HardeningScript -Filter "*LogonAsService.ps1").FullName)"  -accountToAdd "$CHC_LogonAsService_Group"
+
+Write-output $date 'Adding Log on as a service accounts to the local GPO settings task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+### Impersonate a client after authentication including Web server settings ###
+
+Write-Host "### Impersonate a client after authentication including Web server settings ###" -ForegroundColor Green
+
+$wmiDomain = ( (Get-WmiObject Win32_ComputerSystem).Domain)
+$domain = $wmiDomain.Split(".")[0]
+
+$RegPath = Test-path -Path 'HKLM:\SOFTWARE\WOW6432Node\Medcon\TCS\features'
+
+if($RegPath -eq "True"){
+
+$web = Get-ItemProperty -Path 'HKLM:\SOFTWARE\WOW6432Node\Medcon\TCS\features' -Name 'WebServer'
+
+}  
+
+if ($web.WebServer -eq 1 -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+& $dir\ntrights.exe +r SeImpersonatePrivilege -u $CHCDpool
+& $dir\ntrights.exe +r SeImpersonatePrivilege -u $CHCRpool
+& $dir\ntrights.exe +r SeImpersonatePrivilege -u $CHCservice
+& $dir\ntrights.exe +r SeImpersonatePrivilege -u $CHCcrn
+
+Write-output $date 'Adding Impersonate a client after authentication to the local GPO settings task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+ 
+ if ($web.WebServer -eq 0 -and ($jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+& $dir\ntrights.exe +r SeImpersonatePrivilege -u $CHCservice
+
+Write-output $date 'Adding Impersonate a client after authentication to the local GPO settings task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+### Deny log on through Remote Desktop Services ###
+
+Write-Host "### Deny log on through Remote Desktop Services ###" -ForegroundColor Green
+
+import-module $dir\LHSNTrights.psm1
+
+if ($jsonusersandgroups.HardeningSettings.IsDoD) {
+
+Set-LHSNTRights -PrivilegeName SeDenyRemoteInteractiveLogonRight -Identity $Enterprise_Admins
+Set-LHSNTRights -PrivilegeName SeDenyRemoteInteractiveLogonRight -Identity $domain_admins
+
+Write-output $date 'Deny log on through Remote Desktop Services to the local GPO settings task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+### Deny log on as a service ###
+
+Write-Host "### Deny log on as a service ###" -ForegroundColor Green
+
+if ($jsonusersandgroups.HardeningSettings.IsDoD) {
+
+Set-LHSNTRights -PrivilegeName SeDenyServiceLogonRight -Identity $Enterprise_Admins
+Set-LHSNTRights -PrivilegeName SeDenyServiceLogonRight -Identity $domain_admins
+
+Write-output $date 'Deny log on as a service to the local GPO settings task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+### Deny log on as a batch job ###
+
+Write-Host "### Deny log on as a batch job ###" -ForegroundColor Green
+
+if ($jsonusersandgroups.HardeningSettings.IsDoD) {
+
+Set-LHSNTRights -PrivilegeName SeDenyBatchLogonRight -Identity $Enterprise_Admins
+Set-LHSNTRights -PrivilegeName SeDenyBatchLogonRight -Identity $domain_admins
+
+Write-output $date 'Deny log on as a batch job to the local GPO settings task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+### Deny access to this computer from network ###
+
+Write-Host "### Deny access to this computer from network ###" -ForegroundColor Green
+
+$compname = Get-WmiObject Win32_Computersystem
+$hostname = $compname.PSComputerName
+
+if ($jsonusersandgroups.HardeningSettings.IsDoD) {
+
+Set-LHSNTRights -PrivilegeName SeDenyNetworkLogonRight -Identity $Enterprise_Admins
+Set-LHSNTRights -PrivilegeName SeDenyNetworkLogonRight -Identity $domain_admins
+Set-LHSNTRights -PrivilegeName SeDenyNetworkLogonRight -Identity $hostname\DenyNetworkAccess
+
+Write-output $date 'Deny access to this computer from network to the local GPO settings task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+### Create a token object ###
+
+Write-Host "### Create a token object ###" -ForegroundColor Green
+
+if ($jsonusersandgroups.HardeningSettings.IsDoD) {
+
+
+& $dir\ntrights.exe +r SeCreateTokenPrivilege -u $CHCsetup
+& $dir\ntrights.exe +r SeCreateTokenPrivilege -u $CHCservice
+& $dir\ntrights.exe +r SeCreateTokenPrivilege -u 'LOCAL SERVICE'
+
+Write-output $date 'Create a token object to the local GPO settings task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+### Allow log on locally for local Administrator and local Users group ###
+
+Write-Host "### Allow log on locally for local Administrator and local Users group ###" -ForegroundColor Green
+
+$compname = Get-WmiObject Win32_Computersystem
+$hostname = $compname.PSComputerName
+
+if ($jsonusersandgroups.HardeningSettings.IsDoD) {
+
+& $dir\AddAccountToLogonLocally.ps1
+
+Write-output $date 'Allow log on locally for local Administrator and local Users group to the local GPO settings task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+### Access this computer from the network ###
+
+Write-Host "### Access this computer from the network ###" -ForegroundColor Green
+
+if ($jsonusersandgroups.HardeningSettings.IsDoD) {
+
+Set-LHSNTRights -PrivilegeName SeNetworkLogonRight -Identity 'Enterprise Domain Controllers'
+
+Set-LHSNTRights -PrivilegeName SeNetworkLogonRight -Identity Administrators
+
+Set-LHSNTRights -PrivilegeName SeNetworkLogonRight -Identity 'Authenticated Users'
+
+Write-output $date 'Access this computer from the network to the local GPO settings task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+}
+
+Catch
+
+ {
+
+Out-File -InputObject "$date $_  'Adding one of the tasks of Domain User and Group accounts to the local GPO settings task failure'" -FilePath  d:\tcs_logs\server_hardening.txt -Append
+
+
+}
+
+Get-EventLog -LogName Security -Newest 30 -InstanceId 4672 | Select-Object -Property Message | Format-List | Out-File -FilePath D:\TCS_Logs\gpo_users_privileges.txt
+
+#endregion Manual GPO configuration - Adding Domain User and Group accounts to the local GPO settings
+
+#region Export GPO users privileges to D:\tcs_logs\Gpo_Users_Privileges.txt
+
+Write-Host "### Export GPO users privileges to D:\tcs_logs\Gpo_Users_Privileges.txt ###" -ForegroundColor Green
+
+if ($ServerOSversion -notmatch "2012") {
+
+#requires -version 2
+
+# Fail script if we can't find SecEdit.exe
+$SecEdit = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::System)) "SecEdit.exe"
+if ( -not (Test-Path $SecEdit) ) {
+  Write-Error "File not found - '$SecEdit'" -Category ObjectNotFound
+  exit
+}
+
+# LookupPrivilegeDisplayName Win32 API doesn't resolve logon right display
+# names, so use this hashtable
+$UserLogonRights = @{
+  "SeBatchLogonRight"                 = "Log on as a batch job"
+  "SeDenyBatchLogonRight"             = "Deny log on as a batch job"
+  "SeDenyInteractiveLogonRight"       = "Deny log on locally"
+  "SeDenyNetworkLogonRight"           = "Deny access to this computer from the network"
+  "SeDenyRemoteInteractiveLogonRight" = "Deny log on through Remote Desktop Services"
+  "SeDenyServiceLogonRight"           = "Deny log on as a service"
+  "SeInteractiveLogonRight"           = "Allow log on locally"
+  "SeNetworkLogonRight"               = "Access this computer from the network"
+  "SeRemoteInteractiveLogonRight"     = "Allow log on through Remote Desktop Services"
+  "SeServiceLogonRight"               = "Log on as a service"
+}
+
+# Create type to invoke LookupPrivilegeDisplayName Win32 API
+$Win32APISignature = @'
+[DllImport("advapi32.dll", SetLastError=true)]
+public static extern bool LookupPrivilegeDisplayName(
+  string systemName,
+  string privilegeName,
+  System.Text.StringBuilder displayName,
+  ref uint cbDisplayName,
+  out uint languageId
+);
+'@
+$AdvApi32 = Add-Type advapi32 $Win32APISignature -Namespace LookupPrivilegeDisplayName -PassThru
+
+# Use LookupPrivilegeDisplayName Win32 API to get display name of privilege
+# (except for user logon rights)
+function Get-PrivilegeDisplayName {
+  param(
+    [String] $name
+  )
+  $displayNameSB = New-Object System.Text.StringBuilder 1024
+  $languageId = 0
+  $ok = $AdvApi32::LookupPrivilegeDisplayName($null, $name, $displayNameSB, [Ref] $displayNameSB.Capacity, [Ref] $languageId)
+  if ( $ok ) {
+    $displayNameSB.ToString()
+  }
+  else {
+    # Doesn't lookup logon rights, so use hashtable for that
+    if ( $UserLogonRights[$name] ) {
+      $UserLogonRights[$name]
+    }
+    else {
+      $name
+    }
+  }
+}
+
+# Outputs list of hashtables as a PSObject
+function Out-Object {
+  param(
+    [System.Collections.Hashtable[]] $hashData
+  )
+  $order = @()
+  $result = @{}
+  $hashData | ForEach-Object {
+    $order += ($_.Keys -as [Array])[0]
+    $result += $_
+  }
+  New-Object PSObject -Property $result | Select-Object $order
+}
+
+
+# Translates a SID in the form *S-1-5-... to its account name;
+
+function Get-AccountName {
+  param(
+    [String] $principal
+  )
+  if ( $principal[0] -eq "*" ) {
+    $sid = New-Object System.Security.Principal.SecurityIdentifier($principal.Substring(1))
+    $sid.Translate([Security.Principal.NTAccount])
+  }
+  else {
+    $principal
+  }
+}
+
+$TemplateFilename = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName())
+$LogFilename = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName())
+$StdOut = & $SecEdit /export /cfg $TemplateFilename /areas USER_RIGHTS /log $LogFilename
+$priv = if ( $LASTEXITCODE -eq 0 ) {
+  Select-String '^(Se\S+) = (\S+)' $TemplateFilename | Foreach-Object {
+    $Privilege = $_.Matches[0].Groups[1].Value
+    $Principals = $_.Matches[0].Groups[2].Value -split ','
+    foreach ( $Principal in $Principals ) {
+      Out-Object `
+        @{"PrivilegeName" = Get-PrivilegeDisplayName $Privilege},
+        @{"Principal" = Get-AccountName $Principal}
+      
+     
+    }      
+  }  
+
+} 
+
+}
+
+if ($jsonusersandgroups.HardeningSettings.IsDoD) {
+
+$priv | Out-File -FilePath D:\TCS_Logs\gpo_priv.txt 
+
+$gpo_priv = Get-Content -Path D:\TCS_Logs\gpo_priv.txt | Select-String "Access this computer from the network" , "Create a token object" , "Log on as a batch job" , "Impersonate a client after authentication" , "Log on as a service" , "Deny log on through Remote Desktop Services" , "Deny log on as a service" , "Deny access to this computer from the network" , "Create a token object" , "Allow log on locally" , "Access this computer from the network" , "Replace a process level token"
+
+$gpo_priv | out-file D:\TCS_Logs\Gpo_Users_Privileges.txt
+
+Get-ChildItem -Path D:\TCS_Logs\gpo_priv.txt  | Remove-Item -Force -Recurse -Confirm:$false
+
+}
+
+#endregion region Export GPO users privileges to D:\tcs_logs\Gpo_Users_Privileges.txt
+
+#region Adding and applying firewall on the server
+
+Write-Host "### Adding and applying firewall per server role ###" -ForegroundColor Green
+
+try {
+
+$osversion = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name "ProductName"
+$ServerOSversion = $osversion.ProductName
+
+Set-ItemProperty -path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\FIPSAlgorithmPolicy\" -name 'Enabled' -value 0
+
+
+$serverfirewall12 = Get-ChildItem -Path $newdir\Firewall\Server12.wfw
+
+$serverfirewall16 = Get-ChildItem -Path $newdir\Firewall\Server16.wfw
+
+$serverfirewall19 = Get-ChildItem -Path $newdir\Firewall\Server19.wfw
+
+if ($ServerOSversion -cmatch "2012 R2" -and (!$jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+
+invoke-command {netsh advfirewall import $serverfirewall12} 
+Set-NetFirewallProfile -Enabled True
+
+
+}
+
+if ($ServerOSversion -cmatch "2016" -and (!$jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+
+invoke-command {netsh advfirewall import $serverfirewall16} 
+Set-NetFirewallProfile -Enabled True
+
+
+}
+
+if ($ServerOSversion -cmatch "2019" -and (!$jsonusersandgroups.HardeningSettings.IsDoD)) {
+
+
+invoke-command {netsh advfirewall import $serverfirewall19} 
+Set-NetFirewallProfile -Enabled True
+
+
+}
+
+Set-ItemProperty -path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\FIPSAlgorithmPolicy\" -name 'Enabled' -value 1
+
+Write-output $date 'Adding and applying firewall on the server task completed succesfully'  >>  d:\tcs_logs\server_hardening.txt
+
+}
+
+Catch
+
+ {
+
+Out-File -InputObject "$date $_  'Adding and applying firewall on the server task failure'" -FilePath d:\tcs_logs\server_hardening.txt -Append
+
+}
+
+
+
+#endregion Adding and applying firewall on the server
+
+# 0 - success
+$status = 0
+}
+finally {
+  $status = if ($status -eq 0) { 0 } else { 1 }
+  $type = if ($jsonusersandgroups.HardeningSettings.IsDoD) { 'DoD_Server' } else { 'Commercial_Server' }
+  Add-MetadataToRegistry -Status $status -Type $type
+
+  #region Rebooting the server
+  if ($status -eq 0 -and !$SkipComputerRestart) {
+    Write-Host "### Server hardening scripts completed sucessfuly,rebooting the server please wait ###" -ForegroundColor Green
+
+    $compname = Get-WmiObject Win32_Computersystem
+    $hostname = $compname.PSComputerName
+    Restart-Computer -ComputerName $hostname -Force
+  }
+  #endregion Rebooting the server
+}
